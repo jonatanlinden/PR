@@ -56,8 +56,8 @@
 
 #include <sched.h>
 #include <sys/syscall.h>
-
-
+#include <gsl/gsl_rng.h>
+#include <gsl/gsl_randist.h>
 
 
 
@@ -93,6 +93,9 @@ pin(pid_t t, int cpu)
 }
 
 
+gsl_rng *rng[32];
+
+
 
 /*
  * ***************** LOGGING
@@ -107,7 +110,7 @@ pin(pid_t t, int cpu)
 typedef struct {
     char *name;
     int kind;
-    int val_int;
+    long val_int;
     char *val_string;
     float val_float;
 } log_record_t;
@@ -116,7 +119,7 @@ static log_record_t log_records[MAX_LOG_RECORDS];
 
 static int num_log_records = 0;
 
-static void log_int (char *name, int val) {
+static void log_int (char *name, long val) {
     log_records[num_log_records].name = name;
     log_records[num_log_records].kind = LOG_KIND_INT;
     log_records[num_log_records].val_int = val;
@@ -196,8 +199,11 @@ typedef struct log_st
 static log_t *global_log;
 static interval_t interval = 0;
 
+unsigned long long max_key;
+
+
 static bool_t go = FALSE;
-static int threads_initialised1 = 0, max_key, log_max_key;
+static int threads_initialised1 = 0, log_max_key;
 static int threads_initialised2 = 0, max_offset;
 static int threads_initialised3 = 0;
 int num_threads;
@@ -231,7 +237,7 @@ static void alarm_handler( int arg)
 
 static void *thread_start(void *arg)
 {
-    unsigned long k;
+    unsigned long k, ok;
     int i;
     void *ov, *v;
     int id = (int)arg;
@@ -241,9 +247,14 @@ static void *thread_start(void *arg)
 #endif
     unsigned long r = ((unsigned long)arg)+3; /*RDTICK();*/
     unsigned int prop = proportion;
-    unsigned int _max_key = max_key;
+
 
     pin (gettid(), (unsigned long)arg);
+
+    rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
+    gsl_rng_set(rng[id], time(NULL)+id);
+// salt it!!?
+
 
     if ( id == 0 )
     {
@@ -264,21 +275,14 @@ static void *thread_start(void *arg)
 #ifndef DO_WRITE_LOG
     /* Start search structure off with a well-distributed set of inital keys */
 
-    /* for ( i = (_max_key / num_threads); i != 0; i >>= 1 ) */
-    /* { */
-    /*     for ( k = i >> 1; k < (_max_key / num_threads); k += i ) */
-    /*     { */
-    /*         set_update(shared.set,  */
-    /*                    k + id * (_max_key / num_threads), (void *)(k + id * (_max_key / num_threads)), 1); */
-	    
-    /*                    //(void *)0xdeadbee0, 1); */
-    /*     } */
-    /* } */
     if (id == 0) {
-    for (i = 0; i < _max_key >> 10; i++) {
-	set_update(shared.set, i, (void *)i+1, 1);//(void *)0xdeadbee0, 1);
+    for (i = 0; i < max_key; i++) {
+	set_update(shared.set, i, (void *)i+1, 1, id);//(void *)0xdeadbee0, 1);
     }
     printf("init ready\n");
+    printf("num elements: %llu\n", max_key);
+    printf("sentinel: %llu\n", ~0UL);
+    
     
     }
 
@@ -308,6 +312,7 @@ static void *thread_start(void *arg)
     int del_cnt = 0;
     int upd_cnt = 0;
     ov = NULL;
+    ok = 0;
     
 #ifdef DO_WRITE_LOG
     get_interval(my_int);
@@ -317,7 +322,7 @@ static void *thread_start(void *arg)
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
     {
         /* O-3: ignore ; 4-11: proportion ; 12: ins/del */
-        k = (500+ 32*i + (int)arg) & (_max_key - 1);
+
 	//k = (nrand(r) >> 4) & (_max_key - 1);
 		
 	
@@ -332,17 +337,26 @@ static void *thread_start(void *arg)
         else if ( ((r>>12)&1) )
         {
             v = (void *)((r&~7)|0x8);
-            ov = set_update(shared.set, k, v, 1);
+	    // always increase... (geometric dist.)
+	    k = ok + 10000 * gsl_ran_geometric (rng[id], 0.2);
+	    //if (!(i % 100000)) {
+	    //printf("new k: %llu\n", k);
+	    //}
+
+            ov = set_update(shared.set, k, v, 1, id);
 	    upd_cnt++;
-	} else
-        {
-            v = set_removemin(shared.set);
+	} else {
+            k = set_removemin(shared.set);
+	    //if (!(i % 100000)) {
+	    //printf("min k: %llu\n", k);
+	    //}
 	    
-	    //if (v <= ov) printf("v %d, ov %d\n", v, ov);
-// only count accesses that succeed.
-	    if (ov != NULL) del_cnt++;
-	    ov = v;
-	    
+
+	    v = NULL;
+	    if (k > 1) {
+		del_cnt++;
+		ok = k;
+	    }
         }
 
 #ifdef DO_WRITE_LOG
@@ -441,8 +455,8 @@ static void test_multithreaded (void)
     {
         num_successes += delete_successes[i];
 	num_upd_successes += update_successes[i];
-	printf("tid %d: del successes: %d\n", i,delete_successes[i]);
-	printf("tid %d: upd successes: %d\n", i,update_successes[i]);
+	//printf("tid %d: del successes: %d\n", i,delete_successes[i]);
+	//printf("tid %d: upd successes: %d\n", i,update_successes[i]);
 	
 	
         if ( delete_successes[i] < min_successes ) min_successes = delete_successes[i];
@@ -516,8 +530,8 @@ int main (int argc, char **argv)
     log_float ("frac_reads", (float)proportion/256.0);
 
     log_max_key = atoi(argv[3]);
-    max_key = 1 << atoi(argv[3]);
-    log_int("max_key", max_key);
+    max_key = 1ULL << atoi(argv[3]);
+    log_int("num_elements", max_key);
 
     max_offset = atoi(argv[4]);
     log_int("max_offset", max_offset);

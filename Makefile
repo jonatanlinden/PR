@@ -5,7 +5,7 @@ DEBUGGING := -g -O0
 ifeq ($(ARCH),INTEL)
 CC          := gcc -std=c99
 CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
-LDFLAGS     := -lpthread
+LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl` # -L${HOME}/local/lib -lsheriff
 endif
 
 

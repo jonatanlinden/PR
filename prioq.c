@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <stdint.h>
 #include "portable_defns.h"
 #include "ptst.h"
 #include "set.h"
@@ -55,12 +56,11 @@ typedef VOLATILE node_t *sh_node_pt;
 struct node_st
 {
     setkey_t  k;
-    char pad[56];
-    int        level;
+    int       level;
     setval_t  v;
 #define LEVEL_MASK     0x0ff
 #define READY_FOR_FREE 0x100
-
+    char pad0[88]; // increases perf.
     sh_node_pt next[1];
 };
 
@@ -101,7 +101,10 @@ static node_t *alloc_node(ptst_t *ptst)
     node_t *n;
     l = get_level(ptst);
     n = gc_alloc(ptst, gc_id[l - 1]);
+    //n = ALIGNED_ALLOC(sizeof (node_t) + (l-1)*sizeof(sh_node_pt));
+    
     n->level = l;
+    
     return(n);
 }
 
@@ -112,6 +115,30 @@ static void free_node(ptst_t *ptst, sh_node_pt n)
     //gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
 }
 
+
+
+static sh_node_pt weak_search_head(
+    set_t *l)
+{
+    sh_node_pt x, x_next;
+    setkey_t  x_next_k;
+    int        i;
+    x = &l->head;
+    for ( i = NUM_LEVELS - 1; i >= 0; i-- )
+    {
+        for ( ; ; )
+        {
+            x_next = x->next[i]; 
+            x_next = get_unmarked_ref(x_next);
+
+            x_next_k = x_next->k;
+            if ( x_next_k > 1 ) break;
+
+            x = x_next;
+	}
+    }
+    return x_next;
+}
 
 
 static int weak_search_end(
@@ -169,10 +196,9 @@ restart:
             x_next = get_unmarked_ref(x_next);
 
             x_next_k = x_next->k;
-            if ( x_next_k >= k ) break;
+            if ( x_next_k > k ) break;
 
             x = x_next;
-	    //assert(x != 0xfefefefefefefefe);
 	}
 
         if ( pa ) pa[i] = x;
@@ -228,37 +254,25 @@ set_t *set_alloc(int max_offset)
 }
 
 
-setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
+
+setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
 {
     setval_t  ov, new_ov;
     ptst_t    *ptst;
     sh_node_pt preds[NUM_LEVELS], succs[NUM_LEVELS];
     sh_node_pt pred, succ, new = NULL, new_next, old_next;
     int        i, level;
-    static int samekey_cnt = 0;
-
+    sh_node_pt x, x_next;
+    int loop0;
+    
     k = CALLER_TO_INTERNAL_KEY(k);
-
     ptst = critical_enter();
 
     succ = weak_search_predecessors(l, k, preds, succs);
-    
-    
- retry:
-    ov = NULL;
 
-    if ( succ->k == k )
-    {
-        /* Already a @k node in the list: update its mapping. */
-        new_ov = succ->v;
-	
-        do {
-	    ov = new_ov;
-	    assert(new_ov != NULL);
-        }
-        while ( overwrite && ((new_ov = CASPO(&succ->v, ov, v)) != ov) );
-        goto out;
-    }
+ retry:
+    loop0 = 0;
+    ov = NULL;
 
     /* Not in the list, so initialise a new node for insertion. */
     if ( new == NULL )
@@ -283,10 +297,38 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded */
 	//TODO: FIX
-        succ = weak_search_predecessors(l, k, preds, succs);
-        goto retry;
+	if (is_marked_ref(preds[0]->next[0])) {
+	    new->level = 1;
+	    x = get_unmarked_ref(preds[0]->next[0]);
+	    do {
+		loop0 ++;
+		if (loop0 > 10) {
+		    x = weak_search_head(l);
+		    loop0 = 0;
+		}
+		x_next = x->next[0];
+		if (!is_marked_ref(x_next)) {
+		    /* The marker is on the preceding pointer. 
+		     * Let's try to squeeze in here. */
+		    new->next[0] = x_next;
+		    if((old_next = CASPO(&x->next[0], x_next, new)) == x_next)
+		    {
+			if (loop0 > 5){
+			    printf("Contended queue: %d\n", loop0);
+			}
+			goto success;
+		    }
+		} 
+		x = get_unmarked_ref(x_next);
+	    } while(1);
+	} else {
+	    /* competing insert. */
+	    succ = weak_search_predecessors(l, k, preds, succs);
+	    goto retry;
+	}
     }
-
+    
+    
     /* Insert at each of the other levels in turn. */
     i = 1;
     while ( i < level )
@@ -317,12 +359,6 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
 	    RMB(); /* get up-to-date view of the world. */
 	    if (is_marked_ref(new->next[0]) || new->k != k) goto success;
 	    
-	    //__sync_fetch_and_add(&samekey_cnt, 1);
-	    
-	    //if (!(samekey_cnt%1000000)) {
-	    //    printf("samekey: %d\n", samekey_cnt);
-	    //}
-
             succ = weak_search_predecessors(l, k, preds, succs);
 	    if (succ != new) goto success;
 	    
@@ -334,7 +370,7 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
     }
 
 success:
-out:
+
     critical_exit(ptst);
     return(ov);
 }
@@ -352,9 +388,10 @@ out:
 int struct_cnt = 0;
 
 
-setval_t set_removemin(set_t *l)
+setkey_t set_removemin(set_t *l)
 {
     setval_t   v = NULL;
+    setkey_t   k = 0;
     ptst_t    *ptst;
     sh_node_pt preds[NUM_LEVELS];
     sh_node_pt x, cur, x_next, obs_hp;
@@ -363,17 +400,17 @@ setval_t set_removemin(set_t *l)
     ptst = critical_enter();
 
     x = &l->head;
-
     obs_hp = x->next[0];
 
     do {
 	offset++;
 	x_next = x->next[0];
-	if ( x_next == NULL )//|| x_next->k == SENTINEL_KEYMAX)//x_next == 0xfefefefefefefefe) 
-	    goto out;
-	if (!is_marked_ref(x_next)) {
+	if (x_next == 0xfefefefefefefefe) goto out;// || x_next->k == SENTINEL_KEYMAX)//x_next == 0xfefefefefefefefe) 
+	//goto out;
+	// TODO: check for end of list.
+	if (!is_marked_ref(x_next)) { // save 1 FAO if not set. (and we expect it not to be)
 	    /* the marker is on the preceding pointer */
-	x_next = FAO((sh_node_pt *)get_unmarked_ref(&x->next[0]), 1); /* linearisation */
+	    x_next = FAO((sh_node_pt *)get_unmarked_ref(&x->next[0]), 1); /* linearisation */
 	}
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
@@ -381,11 +418,15 @@ setval_t set_removemin(set_t *l)
     x = x_next;
 
     /* save value */
-    v = x->v;
-
+    v = x_next->v;
+    k = x_next->k;
+    if (k == SENTINEL_KEYMAX) { /* end of queue */
+	FAA((sh_node_pt *)&x->next[0], ~1UL);
+	k = 0;
+	goto out;
+    }
     /* HELP: inserts to find right place. */
-    x->k = SENTINEL_KEYMIN;
-
+    //x->k = SENTINEL_KEYMIN;
 
     /* if the offset is big enough, try to clean up 
      * we swing the hp to the new auxiliary node x (which is deleted) 
@@ -411,25 +452,7 @@ setval_t set_removemin(set_t *l)
 
 out:
     critical_exit(ptst);
-    return v;
-}
-
-
-setval_t set_lookup(set_t *l, setkey_t k)
-{
-    setval_t  v = NULL;
-    ptst_t    *ptst;
-    sh_node_pt x;
-
-    k = CALLER_TO_INTERNAL_KEY(k);
-
-    ptst = critical_enter();
-
-    x = weak_search_predecessors(l, k, NULL, NULL);
-    if ( x->k == k ) READ_FIELD(v, x->v);
-
-    critical_exit(ptst);
-    return(v);
+    return k;
 }
 
 
@@ -439,6 +462,21 @@ void _init_set_subsystem(void)
 
     for ( i = 0; i < NUM_LEVELS; i++ )
     {
-        gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
+	printf("old size: %d\n",sizeof(node_t) + i*sizeof(node_t *));
+	printf("size added: %d\n",64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
+	
+        gc_id[i] = gc_add_allocator(64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
+	//gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
+	
     }
 }
+
+
+
+
+
+
+
+
+
+

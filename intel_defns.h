@@ -35,6 +35,8 @@
 
 #define FAO(_a, _n) __sync_fetch_and_or(_a, _n)
 
+#define FAA(_a, _n) __sync_fetch_and_and(_a, _n)
+
 #define FAS(_a, _n)                                        \
     ({ __typeof__(_n) __o;                                     \
 	__asm__ __volatile__(                                   \
