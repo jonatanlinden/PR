@@ -9,7 +9,7 @@ LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl` # -L${HOME}/local/lib 
 endif
 
 
-CFLAGS      += $(DEBUGGING)
+#CFLAGS      += $(DEBUGGING)
 COMMON_DEPS += Makefile $(wildcard *.h)
 
 GC_HARNESS_TARGETS := skip_lock_perlist skip_lock_pernode skip_lock_perpointer

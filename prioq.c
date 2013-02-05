@@ -131,8 +131,9 @@ static sh_node_pt weak_search_head(
             x_next = x->next[i]; 
             x_next = get_unmarked_ref(x_next);
 
-            x_next_k = x_next->k;
-            if ( x_next_k > 1 ) break;
+	    if (!is_marked_ref(x_next->next[0])) break;
+            //x_next_k = x_next->k;
+            //if ( x_next_k > 1 ) break;
 
             x = x_next;
 	}
@@ -141,26 +142,27 @@ static sh_node_pt weak_search_head(
 }
 
 
-static int weak_search_end(
-    set_t *l, sh_node_pt *pa)
+static int weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
 {
     sh_node_pt x, x_next;
     setkey_t  x_next_k;
     int        i;
     int lvl = 0;
+    int start_lvl = toplvl == -1 ? NUM_LEVELS - 1 : toplvl;
+    if (toplvl > 0) lvl = toplvl;
+    
     x = &l->head;
-    for ( i = NUM_LEVELS - 1; i >= 0; i-- )
+    for ( i = start_lvl; i >= 0; i-- )
     {
-	if ((!lvl) && is_marked_ref(x->next[i])) {
-	    lvl = i;
-	}
         for ( ; ; )
         {
             x_next = x->next[i]; 
             x_next = get_unmarked_ref(x_next);
 
-            x_next_k = x_next->k;
-            if ( x_next_k > 1 ) break;
+	    if (!is_marked_ref(x_next->next[0])) break;
+            
+	    /* first lvl that is actual to update */
+	    if (!lvl) lvl = i;
 
             x = x_next;
 	    //assert(x != 0xfefefefefefefefe);
@@ -375,18 +377,6 @@ success:
     return(ov);
 }
 
-    
-    
-#define FAAmodk(_addr, _x, _k)				\
-    ({ __typeof__(_x) _y;				\
-	_y = __sync_fetch_and_add((_addr), (_x)%(_k));  \
-    if (_y >= 0) __sync_fetch_and_add((_addr), -(_k));  \
-    _y % _k;						\
-    })
-
-
-int struct_cnt = 0;
-
 
 setkey_t set_removemin(set_t *l)
 {
@@ -406,7 +396,6 @@ setkey_t set_removemin(set_t *l)
 	offset++;
 	x_next = x->next[0];
 	if (x_next == 0xfefefefefefefefe) goto out;// || x_next->k == SENTINEL_KEYMAX)//x_next == 0xfefefefefefefefe) 
-	//goto out;
 	// TODO: check for end of list.
 	if (!is_marked_ref(x_next)) { // save 1 FAO if not set. (and we expect it not to be)
 	    /* the marker is on the preceding pointer */
@@ -421,7 +410,8 @@ setkey_t set_removemin(set_t *l)
     v = x_next->v;
     k = x_next->k;
     if (k == SENTINEL_KEYMAX) { /* end of queue */
-	FAA((sh_node_pt *)&x->next[0], ~1UL);
+	dprintf("issue, end of q reached.");
+	FAA(&x->next[0], ~1UL);
 	k = 0;
 	goto out;
     }
@@ -433,20 +423,28 @@ setkey_t set_removemin(set_t *l)
      */
     if (offset <= l->max_offset) goto out;
 
-    /* TODO: resolve header pointer conflicts */
-    //int mycnt = FAAmodk(&struct_cnt, 1, 32);
-
     if (CASPO(&l->head.next[0], obs_hp, get_marked_ref(x)))
     {
 	/* Here we own every node between old hp and x.
 	 */
-	lvl = weak_search_end(l, preds);
+	lvl = weak_search_end(l, preds, -1);
+	/* bail out if next restructuring have started */
+	if (preds[0] != x) goto out; 
 	
 	for (int i = lvl; i > 0; i--) {
-	    CASPO(&l->head.next[i], l->head.next[i], preds[i]->next[i]);
-	}
+	    if(!CASPO(&l->head.next[i], l->head.next[i], preds[i]->next[i])) {
+		if (preds[0] != x) {
+		    goto out;
+		} else {
+		    // someone inserted at i, refind new head.
+		    weak_search_end(l, preds, i);
+		    if (preds[0] != x) goto out;
+		}
+	    }
 
+	}
     }
+    
 
     //free_node(ptst, x_next);
 
@@ -470,13 +468,5 @@ void _init_set_subsystem(void)
 	
     }
 }
-
-
-
-
-
-
-
-
 
 

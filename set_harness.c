@@ -53,6 +53,7 @@
 #include <limits.h>
 #include <assert.h>
 #include <stdarg.h>
+#include <math.h>
 
 #include <sched.h>
 #include <sys/syscall.h>
@@ -338,8 +339,10 @@ static void *thread_start(void *arg)
         {
             v = (void *)((r&~7)|0x8);
 	    // always increase... (geometric dist.)
-	    k = ok + 10000 * gsl_ran_geometric (rng[id], 0.2);
-	    //if (!(i % 100000)) {
+	    //k = ok + (long)ceil(gsl_ran_exponential (rng[id], 0.001));
+	    k = ok + 10000+ 1000*gsl_ran_geometric (rng[id], 0.001);
+	
+	    //if (!(i % 1000000)) {
 	    //printf("new k: %llu\n", k);
 	    //}
 
