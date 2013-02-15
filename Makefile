@@ -9,7 +9,8 @@ LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl` # -L${HOME}/local/lib 
 endif
 
 
-#CFLAGS      += $(DEBUGGING)
+CFLAGS      += $(DEBUGGING)
+#CFLAGS       += -DNDEBUG
 COMMON_DEPS += Makefile $(wildcard *.h)
 
 GC_HARNESS_TARGETS := skip_lock_perlist skip_lock_pernode skip_lock_perpointer
@@ -45,6 +46,7 @@ skip_lock_perlist.o: skip_lock.c $(COMMON_DEPS)
 skip_mcas.o: skip_mcas.c mcas.c $(COMMON_DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+
 %.o: %.c $(COMMON_DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -63,4 +65,11 @@ rb_stm_herlihy: rb_stm.o stm_herlihy.o set_harness.o ptst.o gc.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 $(GC_HARNESS_TARGETS): %: %.o set_harness.o ptst.o gc.o
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+microtest: prioq.o ptst.o gc.o
+
+tsigas: LDFLAGS += -L${HOME}/NobleDemo64/Lib/Linux64_x86 -lNOBLEDEMO64
+tsigas: CFLAGS += -I${HOME}/NobleDemo64/Include
+tsigas: tsigas.o set_harness.o
 	$(CC) -o $@ $^ $(LDFLAGS)

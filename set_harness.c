@@ -65,6 +65,8 @@
 #include "portable_defns.h"
 #include "set.h"
 #include "ptst.h"
+#include "j_util.h"
+
 
 /* This produces an operation log for the 'replay' checker. */
 //#define DO_WRITE_LOG
@@ -94,7 +96,7 @@ pin(pid_t t, int cpu)
 }
 
 
-gsl_rng *rng[32];
+gsl_rng *rng[64];
 
 
 
@@ -202,7 +204,6 @@ static interval_t interval = 0;
 
 unsigned long long max_key;
 
-
 static bool_t go = FALSE;
 static int threads_initialised1 = 0, log_max_key;
 static int threads_initialised2 = 0, max_offset;
@@ -210,6 +211,10 @@ static int threads_initialised3 = 0;
 int num_threads;
 
 static unsigned long proportion;
+static unsigned long arrival_intensity;
+static unsigned long local_comp;
+
+
 
 static struct timeval start_time, done_time;
 static struct tms start_tms, done_tms;
@@ -234,7 +239,6 @@ static void alarm_handler( int arg)
     shared.alarm_time = 1;
 }
 
-/*int cntr[MAX_THREADS] = { 0 };*/
 
 static void *thread_start(void *arg)
 {
@@ -247,15 +251,14 @@ static void *thread_start(void *arg)
     interval_t my_int;
 #endif
     unsigned long r = ((unsigned long)arg)+3; /*RDTICK();*/
-    unsigned int prop = proportion;
-
+    unsigned int intens = arrival_intensity;
+    unsigned int local = local_comp;
 
     pin (gettid(), (unsigned long)arg);
 
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
-// salt it!!?
-
+    
 
     if ( id == 0 )
     {
@@ -277,13 +280,11 @@ static void *thread_start(void *arg)
     /* Start search structure off with a well-distributed set of inital keys */
 
     if (id == 0) {
-    for (i = 0; i < max_key; i++) {
+    for (i = 1; i < max_key; i++) {
 	set_update(shared.set, i, (void *)i+1, 1, id);//(void *)0xdeadbee0, 1);
     }
     printf("init ready\n");
     printf("num elements: %llu\n", max_key);
-    printf("sentinel: %llu\n", ~0UL);
-    
     
     }
 
@@ -318,29 +319,59 @@ static void *thread_start(void *arg)
 #ifdef DO_WRITE_LOG
     get_interval(my_int);
 #endif
-
+    uint64_t now;
+    
 
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
     {
-        /* O-3: ignore ; 4-11: proportion ; 12: ins/del */
-
 	//k = (nrand(r) >> 4) & (_max_key - 1);
-		
 	
         nrand(r);
 #ifdef DO_WRITE_LOG
         log->start = my_int;
 #endif
-        if ( ((r>>4)&255) < prop )
-        {
-            //ov = v = set_lookup(shared.set, k);
-        }
-        else if ( ((r>>12)&1) )
-        {
+
+
+#define DETERM
+
+	/***********************************************
+	 * Deterministic execution.
+	 */
+#ifdef DETERM
+	v = (void *)((r&~7)|0x8);
+	
+	// always increase.
+
+	k = set_removemin(shared.set, id);
+	//printf("K: %lu\n", k);
+	
+	//if (k > 1) { // success
+	del_cnt++;
+	ok = k;
+//	}
+        //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
+	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+	ov = set_update(shared.set, k, v, 1, id);
+	//upd_cnt++; 
+    
+	now = read_tsc_p();
+	//sleep
+	while(read_tsc_p() - now < local)
+	    ;
+	
+#else
+	//if ( ((r>>4)&255) < prop )
+	//{
+	//ov = v = set_lookup(shared.set, k);
+	//}
+	
+	if ( ((r>>12)&1) )
+	{
             v = (void *)((r&~7)|0x8);
 	    // always increase... (geometric dist.)
-	    //k = ok + (long)ceil(gsl_ran_exponential (rng[id], 0.001));
-	    k = ok + 10000+ 1000*gsl_ran_geometric (rng[id], 0.001);
+	    k = (long)ceil(gsl_ran_exponential (rng[id], intens));
+	    k = ok + k;
+	    //k = ok + gsl_ran_geometric (rng[id], 0.001);
 	
 	    //if (!(i % 1000000)) {
 	    //printf("new k: %llu\n", k);
@@ -350,10 +381,6 @@ static void *thread_start(void *arg)
 	    upd_cnt++;
 	} else {
             k = set_removemin(shared.set);
-	    //if (!(i % 100000)) {
-	    //printf("min k: %llu\n", k);
-	    //}
-	    
 
 	    v = NULL;
 	    if (k > 1) {
@@ -361,6 +388,8 @@ static void *thread_start(void *arg)
 		ok = k;
 	    }
         }
+
+#endif
 
 #ifdef DO_WRITE_LOG
         get_interval(my_int);
@@ -470,8 +499,6 @@ static void test_multithreaded (void)
     log_int ("max_successes", max_successes);
     log_int ("num_del_successes", num_successes);
     log_int ("num_upd_successes", num_upd_successes);
-    
-
     log_float("us_per_success", (num_threads*wall_time*1000000.0)/num_successes);
 
     log_int("log max key", log_max_key);
@@ -509,17 +536,17 @@ int main (int argc, char **argv)
     int fd;
     unsigned long log_header[] = { 0, MAX_ITERATIONS, 0 };
 
-    if ( argc != 6 )
+    if ( argc != 7 )
     {
-        printf("%s <num_threads> <read_proportion> <key power> <log name>\n"
-               "(0 <= read_proportion <= 256)\n", argv[0]);
+        printf("%s <num_threads> <arrival_intens> <key power> <log name>\n"
+               , argv[0]);
         exit(1);
     }
 #else
-    if ( argc != 5 )
+    if ( argc != 6 )
     {
-        printf("%s <num_threads> <read_proportion> <key power> <max_offset>\n"
-               "(0 <= read_proportion <= 256)\n", argv[0]);
+        printf("%s <num_threads> <arrival_intens> <key power> <max_offset> <local_comp>\n"
+               , argv[0]);
         exit(1);
     }
 #endif
@@ -529,9 +556,11 @@ int main (int argc, char **argv)
     num_threads = atoi(argv[1]);
     log_int ("num_threads", num_threads);
 
-    proportion = atoi(argv[2]);
-    log_float ("frac_reads", (float)proportion/256.0);
+    proportion = 0;
 
+    arrival_intensity = atoi(argv[2]);
+    log_int("arrival_intensity", arrival_intensity);
+    
     log_max_key = atoi(argv[3]);
     max_key = 1ULL << atoi(argv[3]);
     log_int("num_elements", max_key);
@@ -539,8 +568,11 @@ int main (int argc, char **argv)
     max_offset = atoi(argv[4]);
     log_int("max_offset", max_offset);
 
-    log_int ("max_iterations", MAX_ITERATIONS);
+    local_comp = atoi(argv[5]);
+    log_int("local_comp", local_comp);
 
+
+    log_int ("max_iterations", MAX_ITERATIONS);
     log_int ("wall_time_limit_s", MAX_WALL_TIME);
 
 #ifdef DO_WRITE_LOG

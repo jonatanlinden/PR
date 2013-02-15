@@ -39,10 +39,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <inttypes.h>
 #include "portable_defns.h"
 #include "ptst.h"
 #include "set.h"
 
+#include "j_util.h"
 
 /*
  * SKIP LIST
@@ -277,8 +279,8 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
     sh_node_pt pred, succ, new = NULL, new_next, old_next;
     int        i, level;
     static int samekey_cnt = 0;
-
-    k = CALLER_TO_INTERNAL_KEY(k);
+    
+    //k = CALLER_TO_INTERNAL_KEY(k);
 
     ptst = critical_enter();
 
@@ -289,6 +291,12 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
 
     if ( succ->k == k )
     {
+	/* __sync_fetch_and_add(&samekey_cnt, 1); */
+	
+	/* if (!(samekey_cnt % 2000)) { */
+	/*     printf("sk: %d\n", samekey_cnt); */
+	/* } */
+
         /* Already a @k node in the list: update its mapping. */
         new_ov = succ->v;
         do {
@@ -377,7 +385,9 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
         do_full_delete(ptst, l, new, level - 1);
     }
  out:
+    
     critical_exit(ptst);
+
     return(ov);
 }
 
@@ -392,7 +402,6 @@ setkey_t set_removemin(set_t *l)
     int        level, i;
     sh_node_pt x, x_next;
     setkey_t  x_k;
-    int bound = 0;
     
     ptst = critical_enter();
 
@@ -400,7 +409,6 @@ setkey_t set_removemin(set_t *l)
 
     while (1)
     {
-	bound++;
 	READ_FIELD(x_next, x->next[0]);
 	x_next = get_unmarked_ref(x_next);
 	
@@ -418,10 +426,6 @@ setkey_t set_removemin(set_t *l)
 	x = x_next;
 	if (v != NULL) break;  //success
 	
-    }
-
-    if (bound > 64) {
-	printf("bound: %d\n", bound);
     }
 
     READ_FIELD(x_k, x->k);
@@ -470,7 +474,7 @@ setval_t set_lookup(set_t *l, setkey_t k)
     ptst_t    *ptst;
     sh_node_pt x;
 
-    k = CALLER_TO_INTERNAL_KEY(k);
+    //k = CALLER_TO_INTERNAL_KEY(k);
 
     ptst = critical_enter();
 
