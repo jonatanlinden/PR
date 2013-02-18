@@ -265,7 +265,7 @@ static void *thread_start(void *arg)
         _init_ptst_subsystem();
         _init_gc_subsystem();
         _init_set_subsystem();
-        shared.set = set_alloc(max_offset);
+        shared.set = set_alloc(max_offset, 20);
     }
 
     /* BARRIER FOR ALL THREADS */
@@ -281,7 +281,7 @@ static void *thread_start(void *arg)
 
     if (id == 0) {
     for (i = 1; i < max_key; i++) {
-	set_update(shared.set, i, (void *)i+1, 1, id);//(void *)0xdeadbee0, 1);
+	set_update(shared.set, i, (void *)i+1);//(void *)0xdeadbee0, 1);
     }
     printf("init ready\n");
     printf("num elements: %llu\n", max_key);
@@ -342,7 +342,7 @@ static void *thread_start(void *arg)
 	
 	// always increase.
 
-	k = set_removemin(shared.set, id);
+	k = set_removemin(shared.set);
 	//printf("K: %lu\n", k);
 	
 	//if (k > 1) { // success
@@ -350,8 +350,9 @@ static void *thread_start(void *arg)
 	ok = k;
 //	}
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
+	k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
 	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
-	ov = set_update(shared.set, k, v, 1, id);
+	ov = set_update(shared.set, k, v);
 	//upd_cnt++; 
     
 	now = read_tsc_p();
@@ -377,7 +378,7 @@ static void *thread_start(void *arg)
 	    //printf("new k: %llu\n", k);
 	    //}
 
-            ov = set_update(shared.set, k, v, 1, id);
+            ov = set_update(shared.set, k, v);
 	    upd_cnt++;
 	} else {
             k = set_removemin(shared.set);

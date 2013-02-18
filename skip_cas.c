@@ -242,7 +242,7 @@ static void do_full_delete(ptst_t *ptst, set_t *l, sh_node_pt x, int level)
  * PUBLIC FUNCTIONS
  */
 
-set_t *set_alloc(int max_offset)
+set_t *set_alloc(int max_offset, int max_level)
 {
     set_t *l;
     node_t *n;
@@ -271,7 +271,7 @@ set_t *set_alloc(int max_offset)
 }
 
 
-setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
+setval_t set_update(set_t *l, setkey_t k, setval_t v)
 {
     setval_t  ov, new_ov;
     ptst_t    *ptst;
@@ -308,8 +308,8 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v, int overwrite)
                 succ = strong_search_predecessors(l, k, preds, succs);
                 goto retry;
             }
-        }
-        while ( overwrite && ((new_ov = CASPO(&succ->v, ov, v)) != ov) );
+        }// always overwrite
+        while ( 1 && ((new_ov = CASPO(&succ->v, ov, v)) != ov) );
 
         if ( new != NULL ) free_node(ptst, new);
         goto out;

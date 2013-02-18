@@ -3,6 +3,7 @@
  * 
  * Priority queue, allowing concurrent update by use of CAS primitives. 
  * 
+ * Heavily relying on work by K A Fraser
  * Copyright (c) 2001-2003, K A Fraser
  * Copyright (c) 2013-2016, Jonatan Linden
  *
@@ -34,49 +35,20 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define __SET_IMPLEMENTATION__
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <inttypes.h>
+
 #include "portable_defns.h"
+#include "prioq.h"
 #include "ptst.h"
-#include "set.h"
 #include "j_util.h"
 
-
-/*
- * SKIP LIST
- */
-
-#define END (sh_node_pt) 0xfefefefefefefefe
-//#define END (sh_node_pt) 0xc0c0c0c0c0c0c0c0
-
-typedef struct node_st node_t;
-typedef struct set_st set_t;
-typedef VOLATILE node_t *sh_node_pt;
-
-struct node_st
-{
-    setkey_t  k;
-    int       level;
-    char pad2[4]; /* just to make it clear */
-#define LEVEL_MASK     0x0ff
-#define READY_FOR_FREE 0x100
-    setval_t  v;
-    char pad0[36];
-    //char pad1[56];
-    sh_node_pt next[1];
-};
-
-struct set_st
-{
-    int max_offset;
-    node_t head;
-};
 
 static int gc_id[NUM_LEVELS];
 
@@ -88,13 +60,14 @@ static int gc_id[NUM_LEVELS];
  * Random level generator. Drop-off rate is 0.5 per level.
  * Returns value 1 <= level <= NUM_LEVELS.
  */
-static int get_level(ptst_t *ptst)
+static int
+get_level(ptst_t *ptst)
 {
     unsigned long r = rand_next(ptst);
     int l = 1;
     r = (r >> 4) & ((1 << (NUM_LEVELS-1)) - 1);
     while ( (r & 1) ) { l++; r >>= 1; }
-    return(l);
+    return l;
 }
 
 /*
@@ -102,7 +75,8 @@ static int get_level(ptst_t *ptst)
  * NB. Initialisation will eventually be pushed into garbage collector,
  * because of dependent read reordering.
  */
-static node_t *alloc_node(ptst_t *ptst)
+static node_t *
+alloc_node(ptst_t *ptst)
 {
     int l;
     node_t *n;
@@ -110,20 +84,20 @@ static node_t *alloc_node(ptst_t *ptst)
     n = gc_alloc(ptst, gc_id[l - 1]);
     n->level = l;
     
-    return(n);
+    return n;
 }
 
 
 /* Free a node to the garbage collector. */
-static void free_node(ptst_t *ptst, sh_node_pt n)
+static void 
+free_node(ptst_t *ptst, sh_node_pt n)
 {
     //gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
 }
 
 
-
-static sh_node_pt weak_search_head(
-    set_t *l)
+static sh_node_pt 
+weak_search_head(set_t *l)
 {
     sh_node_pt x, x_next;
     setkey_t  x_next_k;
@@ -144,7 +118,8 @@ static sh_node_pt weak_search_head(
 }
 
 
-static int weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
+static int
+weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
 {
     sh_node_pt x, x_next;
     setkey_t  x_next_k;
@@ -164,7 +139,6 @@ static int weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
 	    /* first lvl that actually needs updating */
 	    if (!lvl) lvl = i;
 	    
-	    //if (x_next == (sh_node_pt)0xfefefefefefefefe) break;
             x = x_next;
 	    assert(x != END);
 	}
@@ -183,8 +157,9 @@ static int weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
  *  MAIN RETURN VALUE: same as @na[0].
  */
 /* This function does not remove marked nodes. Use it optimistically. */
-static sh_node_pt weak_search_predecessors(
-    set_t *l, setkey_t k, sh_node_pt *pa, sh_node_pt *na)
+static sh_node_pt
+weak_search_predecessors(set_t *l, setkey_t k,
+			 sh_node_pt *pa, sh_node_pt *na, int bef)
 {
     sh_node_pt x, x_next;
     setkey_t  x_next_k;
@@ -200,7 +175,7 @@ restart:
 
 	    assert (x_next != END);
             x_next_k = x_next->k;
-            if ( x_next_k > k ) break;
+            if ( x_next_k > k || (bef && x_next_k == k)) break;
 
             x = x_next;
 	}
@@ -209,7 +184,7 @@ restart:
         if ( na ) na[i] = x_next;
     }
 
-    return(x_next);
+    return x;
 }
 
 
@@ -221,7 +196,8 @@ restart:
  * PUBLIC FUNCTIONS
  */
 
-set_t *set_alloc(int max_offset)
+set_t *
+set_alloc(int max_offset, int max_level)
 {
     set_t *l;
     node_t *n;
@@ -247,15 +223,15 @@ set_t *set_alloc(int max_offset)
     }
 
     l->max_offset = max_offset;
+    l->max_level  = max_level;
 
-    //dprintf("prioq, max_offset: %d", l->max_offset);
+    assert((sizeof(int)+sizeof(setval_t) + sizeof(setkey_t) + 44) == CACHE_LINE_SIZE);
 
-    return(l);
+    return l;
 }
 
-uint64_t max_time = 0;
-
-void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
+void 
+set_update(set_t *l, setkey_t k, setval_t v)
 {
     ptst_t    *ptst;
     sh_node_pt preds[NUM_LEVELS], succs[NUM_LEVELS];
@@ -263,15 +239,12 @@ void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
     int        i, level;
     sh_node_pt x, x_next;
     int loop0;
-    uint64_t time = 0, time1 = 0;    
     
-//    k = CALLER_TO_INTERNAL_KEY(k);
     ptst = critical_enter();
-
     
  retry:
     loop0 = 0;
-    /* Not in the list, so initialise a new node for insertion. */
+    /* Initialise a new node for insertion. */
     if ( new == NULL )
     {
         new    = alloc_node(ptst);
@@ -279,9 +252,10 @@ void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
         new->v = v;
     }
     level = new->level;
-    time = read_tsc_p();
 
-    succ = weak_search_predecessors(l, k, preds, succs);
+    weak_search_predecessors(l, k, preds, succs, 0);
+    succ = succs[0];
+    
     /* If successors don't change, this saves us some CAS operations. */
     for ( i = 0; i < level; i++ )
     {
@@ -295,7 +269,6 @@ void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
     {
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded */
-	//TODO: FIX
 	if (is_marked_ref(preds[0]->next[0])) {
 	    /* we don't aim at being inserted but at the lowest level */
 	    new->level = 1;
@@ -318,7 +291,8 @@ void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
 	    } while(1);
 	} else {
 	    /* competing insert. */
-	    succ = weak_search_predecessors(l, k, preds, succs);
+	    weak_search_predecessors(l, k, preds, succs, 0);
+	    succ = succs[0];
 	    goto retry;
 	}
     }
@@ -353,7 +327,8 @@ void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
 	    RMB(); /* get up-to-date view of the world. */
 	    if (is_marked_ref(new->next[0]) || new->k != k) goto success;
 	    
-            succ = weak_search_predecessors(l, k, preds, succs);
+            weak_search_predecessors(l, k, preds, succs, 0);
+	    succ = succs[0];
 	    if (succ != new) goto success;
 	    
             continue;
@@ -362,29 +337,16 @@ void set_update(set_t *l, setkey_t k, setval_t v, int overwrite, int id)
         /* Succeeded at this level. */
         i++;
     }
-
 success:
-    time = read_tsc_p() - time;
     critical_exit(ptst);
-
-    __sync_fetch_and_add(&max_time, time);
-
-    if (!(k%100000)) {
-	dprintf("time insert: %"PRIu64, max_time);
-    }
-
-    /*if (time > max_time) {
-	max_time = time;
-	dprintf("insert max time: %"PRIu64, time);
-	}*/
-
 }
 
 // Local cache of node.
 __thread sh_node_pt pt, old_obs_hp;
 __thread int old_offset;
 
-setkey_t set_removemin(set_t *l, int id)
+setkey_t
+set_removemin(set_t *l)
 {
     setval_t   v = NULL;
     setkey_t   k = 0;
@@ -392,10 +354,8 @@ setkey_t set_removemin(set_t *l, int id)
     sh_node_pt preds[NUM_LEVELS];
     sh_node_pt x, cur, x_next, obs_hp;
     int offset = 0, lvl = 0;
-    uint64_t time = 0;
-    int offs_cnt = 0;
-    ptst = critical_enter();
 
+    ptst = critical_enter();
 
     if (old_obs_hp == l->head.next[0]) {
 	x = pt;
@@ -406,17 +366,21 @@ setkey_t set_removemin(set_t *l, int id)
     }
     //x = &l->head;
     //obs_hp = x->next[0];
-    lvl++;    
-    //time = read_tsc_p();
+
+
     do {
 	offset++;
-
-	if ((x->level & LEVEL_MASK) > lvl && is_marked_ref(x->next[lvl]->next[0]))
+#ifdef OPTIM
+	if((x->level & LEVEL_MASK) > 2 && is_marked_ref(x->next[2]->next[0]))
 	{
-	    x_next = get_unmarked_ref(x->next[lvl]->next[0]);
+	    x_next = x->next[2]->next[0];
 	    continue;
 	}
+#endif
+
+
 	x_next = x->next[0]; // expensive
+	// TODO: we must handle the case when we reach the end.
 	assert(x_next != END);
 	
 	if (!is_marked_ref(x_next)) { 
@@ -427,7 +391,6 @@ setkey_t set_removemin(set_t *l, int id)
 	}
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
-    //time = read_tsc_p() - time;
 
     assert(!is_marked_ref(x_next));
     x = x_next;
@@ -438,7 +401,6 @@ setkey_t set_removemin(set_t *l, int id)
     /* save value */
     v = x_next->v;
     k = x_next->k;
-
 
     /* if the offset is big enough, try to clean up 
      * we swing the hp to the new auxiliary node x (which is deleted) 
@@ -473,19 +435,22 @@ out:
     
     critical_exit(ptst);
     
-    //__sync_fetch_and_add(&max_time1, time);
-
-    //dprintf("time remove: %"PRIu64, max_time1);
-    
     return k;
 }
 
-setval_t set_delete_mark(set_t l, setkey_t key)
+setval_t
+set_remove(set_t *l, setkey_t key)
 {
-
+    node_t *node;
+    
+    node = weak_search_predecessors(l, key, NULL, NULL, 1);
+    node = FAO(&node->next[0], 1);
+    if (is_marked_ref(node)) return NULL;
+    
+    return node;
 }
 
-unsigned int 
+unsigned int
 num_digits (unsigned int i)
 {
     return i > 0 ? (int) log10 ((double) i) + 1 : 1;
@@ -495,10 +460,10 @@ unsigned int
 highest_level(set_t *l) {
     sh_node_pt x, x_next;
     x = &l->head;
-    for ( int i = NUM_LEVELS - 1; i >= 1; i-- )
+    for ( int i = l->max_level - 1; i >= 1; i-- )
     {
 	x_next = x->next[i];
-	if (x_next->next[0] != (sh_node_pt)0xfefefefefefefefe)
+	if (x_next->next[0] != END)
 	    return i;
 	
     }
@@ -545,7 +510,7 @@ pprint (set_t *q)
     printf("top: ");
     n = &q->head;
     while (n != END) {
-	printf("  t%2d,d%d", (int) n->level & LEVEL_MASK, is_marked_ref(n->next[0]));
+	printf(" t%2d,d%d", (int) n->level & LEVEL_MASK, is_marked_ref(n->next[0]));
 	n = get_unmarked_ref(n->next[0]);
     }
     printf("\n\n");
@@ -558,27 +523,28 @@ seq_test ()
     _init_ptst_subsystem();
     _init_gc_subsystem();
     _init_set_subsystem();
-    set_t *q = set_alloc(5);
+    set_t *q = set_alloc(5, 6);
 
-    set_update(q, 5, (void *)5, 0, 0);
-    set_update(q, 7, (void *)7, 0, 0);
-    set_removemin(q, 0);
-    set_update(q, 6, (void *)6, 0, 0);
-    set_update(q, 4, (void *)4, 0, 0);
-    set_removemin(q, 0);
-    set_update(q, 10, (void *)10, 0, 0);
-    set_update(q, 4, (void *)4, 0, 0);
-    set_removemin(q, 0);
-    set_removemin(q, 0);
-    set_removemin(q, 0);
-    set_update(q, 4, (void *)4, 0, 0);
+    set_update(q, 5, (void *)5);
+    set_update(q, 7, (void *)7);
+    set_removemin(q);
+    set_update(q, 6, (void *)6);
+    set_update(q, 4, (void *)4);
+    set_removemin(q);
+    set_update(q, 10, (void *)10);
+    set_update(q, 9, (void *)9);
+    
+    set_remove(q, 10);
+    set_update(q, 4, (void *)4);
+    set_removemin(q);
+    set_removemin(q);
+    set_removemin(q);
+    set_update(q, 4, (void *)4);
     pprint(q);
-    set_removemin(q, 0);
+    set_removemin(q);
     pprint(q);
     
 }
-
-
 
 void _init_set_subsystem(void)
 {
@@ -590,11 +556,5 @@ void _init_set_subsystem(void)
         gc_id[i] = gc_add_allocator(64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
     }
 }
-
-
-
-
-
-
 
 

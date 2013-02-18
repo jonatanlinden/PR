@@ -27,7 +27,7 @@ typedef struct node_s
 #define LEVEL_MASK     0x0ff
 #define READY_FOR_FREE 0x100
     setval_t  v;
-    char pad0[36]; // above should be one cache line
+    char pad0[40]; // above should be one cache line
     sh_node_pt next[1];
 } node_t;
 
@@ -41,6 +41,9 @@ typedef struct set_s
 
 
 extern void _init_set_subsystem(void);
+
+
+/* use_this externally */
 
 extern set_t *set_alloc(int max_offset, int max_level);
 
