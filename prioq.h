@@ -26,7 +26,7 @@ typedef void         *setval_t;
 #define END (sh_node_pt) 0xfefefefefefefefe
 //#define END (sh_node_pt) 0xc0c0c0c0c0c0c0c0
 
-typedef VOLATILE struct node_s *sh_node_pt;
+
 
 typedef struct node_s
 {
@@ -37,8 +37,10 @@ typedef struct node_s
 #define READY_FOR_FREE 0x100
     setval_t  v;
     char pad0[40]; // above should be one cache line
-    sh_node_pt next[1];
+    struct node_s *next[1];
 } node_t;
+
+typedef node_t *sh_node_pt;
 
 typedef struct set_s
 {
