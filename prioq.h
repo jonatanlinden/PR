@@ -1,6 +1,8 @@
 
+#include <float.h>
 
-typedef unsigned long setkey_t;
+//typedef unsigned long setkey_t;
+typedef double setkey_t;
 typedef void         *setval_t;
 
 
@@ -8,11 +10,18 @@ typedef void         *setval_t;
 
 /* Internal key values with special meanings. */
 //#define INVALID_FIELD   (0)    /* Uninitialised field value.     */
-#define SENTINEL_KEYMIN ( 0UL) /* Key value of first dummy node. */
-#define SENTINEL_KEYMAX (~0UL) /* Key value of last dummy node.  */
+//#define SENTINEL_KEYMIN ( 0UL) /* Key value of first dummy node. */
+//#define SENTINEL_KEYMAX (~0UL) /* Key value of last dummy node.  */
 
-#define KEY_MIN  ( 0UL)
-#define KEY_MAX  (~0UL)
+#define SENTINEL_KEYMIN DBL_MIN
+#define SENTINEL_KEYMAX DBL_MAX
+
+//#define KEY_MIN  ( 0UL)
+//#define KEY_MAX  (~0UL)
+#define KEYMIN DBL_MIN
+#define KEYMAX DBL_MAX
+
+
 
 #define END (sh_node_pt) 0xfefefefefefefefe
 //#define END (sh_node_pt) 0xc0c0c0c0c0c0c0c0

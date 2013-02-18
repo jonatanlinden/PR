@@ -63,7 +63,8 @@
 
 
 #include "portable_defns.h"
-#include "set.h"
+//#include "set.h"
+#include "prioq.h"
 #include "ptst.h"
 #include "j_util.h"
 
@@ -242,7 +243,8 @@ static void alarm_handler( int arg)
 
 static void *thread_start(void *arg)
 {
-    unsigned long k, ok;
+    //unsigned long k, ok;
+    setkey_t k, ok;
     int i;
     void *ov, *v;
     int id = (int)arg;
@@ -281,7 +283,7 @@ static void *thread_start(void *arg)
 
     if (id == 0) {
     for (i = 1; i < max_key; i++) {
-	set_update(shared.set, i, (void *)i+1);//(void *)0xdeadbee0, 1);
+	set_update(shared.set,(double) i, (void *)i+1);//(void *)0xdeadbee0, 1);
     }
     printf("init ready\n");
     printf("num elements: %llu\n", max_key);
@@ -350,8 +352,10 @@ static void *thread_start(void *arg)
 	ok = k;
 //	}
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
-	k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
-	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
+	//k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+	k = ok + gsl_ran_exponential (rng[id], intens);
+	
 	ov = set_update(shared.set, k, v);
 	//upd_cnt++; 
     
@@ -490,7 +494,6 @@ static void test_multithreaded (void)
 	num_upd_successes += update_successes[i];
 	//printf("tid %d: del successes: %d\n", i,delete_successes[i]);
 	//printf("tid %d: upd successes: %d\n", i,update_successes[i]);
-	
 	
         if ( delete_successes[i] < min_successes ) min_successes = delete_successes[i];
         if ( delete_successes[i] > max_successes ) max_successes = delete_successes[i];

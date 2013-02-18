@@ -473,6 +473,9 @@ highest_level(set_t *l) {
 void
 pprint (set_t *q)
 {
+    char *keyfrm = "%1.1f ";
+    char *keyfrm1 = "-> %1.1f ";
+    //char *keyfrm = "%3d ";
     sh_node_pt n, bottom;
     char *seps[] = {"-------", "----", "---", "--"};
     unsigned int lvl = highest_level(q);
@@ -483,7 +486,9 @@ pprint (set_t *q)
 	printf("l%2d: ", i);
 
 	n = &q->head;
-	printf("%3d ", (int) n->k);
+	printf(keyfrm, n->k);
+
+	
 
 	n = get_unmarked_ref(q->head.next[i]);
 	bottom = get_unmarked_ref(q->head.next[0]);
@@ -494,12 +499,14 @@ pprint (set_t *q)
 	    while (bottom != n)
 	    {
 		/* print arrows */
-		printf("%s", seps[num_digits(bottom->k % 5) -1 ]);
+		//printf("%s", seps[1 -1 ]);
+		printf("-------");
+		
 		bottom = get_unmarked_ref(bottom->next[0]);
 	    }
 	    /* bottom == n */
 	    
-	    printf("-> %3d ", (int) n->k);
+	    printf(keyfrm1, n->k);
 	    
 	    bottom = get_unmarked_ref(bottom->next[0]);
 	    n = get_unmarked_ref(n->next[i]);
@@ -523,10 +530,11 @@ seq_test ()
     _init_ptst_subsystem();
     _init_gc_subsystem();
     _init_set_subsystem();
+
     set_t *q = set_alloc(5, 6);
 
-    set_update(q, 5, (void *)5);
-    set_update(q, 7, (void *)7);
+    set_update(q, (double)5.1, (void *)5);
+    set_update(q, (double)7, (void *)7);
     set_removemin(q);
     set_update(q, 6, (void *)6);
     set_update(q, 4, (void *)4);
@@ -556,5 +564,6 @@ void _init_set_subsystem(void)
         gc_id[i] = gc_add_allocator(64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
     }
 }
+
 
 

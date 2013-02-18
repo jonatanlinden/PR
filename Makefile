@@ -5,8 +5,8 @@ CC          := gcc -std=c99
 CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
-#CFLAGS      += $(DEBUGGING)
-CFLAGS       += -DNDEBUG
+CFLAGS      += $(DEBUGGING)
+#CFLAGS       += -DNDEBUG
 
 COMMON_DEPS += Makefile $(wildcard *.h)
 
