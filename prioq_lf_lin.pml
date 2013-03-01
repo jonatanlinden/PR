@@ -7,7 +7,8 @@
 #define IF if ::
 #define FI :: else fi
 
-#define THREADS 2
+#define NLEVELS 2
+#define THREADS 3
 #define NODES 7
 #define maxOff 2
 
@@ -46,14 +47,15 @@ typedef queue_t {
 
 /**********  declaration of global variables *************/
 
-idx_t key_idx;
-key_t keys[8];
 
 /* rng */
 inline pick_key(var) { 
   d_step {
-    var = keys[key_idx];
-    key_idx++;
+    var = 1;
+    do
+      :: var < 5 -> var++
+      :: break
+    od;
   }
 }
 
@@ -68,8 +70,8 @@ inline seq_add(entry, k) {
 }
 
 inline seq_remove(kl) {
-  if :: (seqset[kl] == 1) -> seqset[kl] = 0
-     :: else -> assert(false); fi;
+  assert(seqset[kl]);
+  seqset[kl] = 0;
 }
 
 
@@ -80,22 +82,14 @@ inline notify_others(kl)
 
   d_step{
     i = 0;
-    do
-      :: {
+    do :: {
 	IF (i != _pid) -> notify[kl].val[i] = 1;
 	FI;
 	i++;
 	IF (i == THREADS) -> break;
 	FI;	
-      }
-    od;
+    } od;
   }
-	  
-
-
-//    :: (_pid == 0) -> notify[kl].val[1] = 1;
-//    :: else -> {assert(_pid == 1); notify[kl].val[0] = 1;}
-//  fi;
 }
 
 
@@ -119,7 +113,6 @@ start:
   /* search */
   bef = 0;
   obs_head = bef;
-  
   do
     /* fast forward to first non-deleted aft */
     :: (q.nodes[bef].del == 0 || q.nodes[bef].next == q.tail) -> break;
@@ -127,10 +120,16 @@ start:
   od;
   aft = q.nodes[bef].next;
   do
+    :: (q.nodes[aft].key == key && !q.nodes[bef].del) ->
+       retval = RET_FALSE;
+       goto end_add;
     :: (q.nodes[aft].key > key) -> break;
     :: else -> bef = aft;
 	       aft = q.nodes[bef].next;
+	       printf("stepping forw. ins: %d, bef: %d\n", key, bef);
   od;
+
+  
   q.nodes[idx].next = aft;
   
   /* swing pred pointer, if not aft is deleted */
@@ -184,7 +183,6 @@ do
        offset ++;
   od;
   IF (offset >= maxOff) ->
-    printf("thinking about resetting hp.\n");
     atomic {  /* cas */
       IF(q.nodes[0].next == obs_head) -> {
 	q.nodes[0].next = q.nodes[bef].next; printf("hp reset.\n");
@@ -207,15 +205,6 @@ inline init_globals()
   
   /* init the structure */
   atomic {
-    keys[0] = 2;
-    keys[1] = 5;
-    keys[2] = 4;
-    keys[3] = 3;
-    keys[4] = 6;
-    keys[5] = 1;
-    keys[6] = 7;
-    keys[7] = 9;
-    key_idx = 0;
     glob_entry = 1;
     q.tail = NODES - 1;
     /* tail */
@@ -251,6 +240,9 @@ inline exec_op(op, key) {
   fi;
 
   assert(retval == RET_TRUE || retval == RET_FALSE);
+
+/* Check non-fixed linearization point, i.e., when operation
+ * failed. */
   
   IF (op == DEL && retval == RET_FALSE) ->
     {assert(i_was_notified(key) || !seqset[key]);}
@@ -261,6 +253,7 @@ inline exec_op(op, key) {
 
   end_op();
 }
+
 
 inline pick_op()
 {
@@ -276,6 +269,7 @@ inline get_entry()
 {
   d_step{
     idx = glob_entry;
+    assert(idx < NODES - 1);
     glob_entry++;
   }
 }
@@ -341,11 +335,10 @@ init {
   init_globals();
   
   run client();
+  run client();
 
   execute();
 
   /* wait until the other process finishes. */
   clients_finished == THREADS - 1;
-
-
 }
