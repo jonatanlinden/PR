@@ -222,6 +222,7 @@ static struct tms start_tms, done_tms;
 
 static int delete_successes[MAX_THREADS];
 static int update_successes[MAX_THREADS];
+static uint64_t global_sleeptime = 0;
 
 
 /* All the variables accessed in the critical main loop. */
@@ -256,7 +257,10 @@ static void *thread_start(void *arg)
     unsigned int intens = arrival_intensity;
     unsigned int local = local_comp;
 
-    pin (gettid(), (unsigned long)arg);
+    //pin (gettid(), 4*(unsigned long)arg);
+    // straight allocation
+    pin (gettid(), id/8 + 4*(id % 8));
+    
 
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
@@ -322,12 +326,17 @@ static void *thread_start(void *arg)
     get_interval(my_int);
 #endif
     uint64_t now;
-    
+    uint64_t lap = read_tsc_p() + 2700000000;
+    long lapcnt = 0;
+    long lapn = 0;
+    uint64_t sleeptime  = 0;
 
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
     {
 	//k = (nrand(r) >> 4) & (_max_key - 1);
 	
+	if 
+
         nrand(r);
 #ifdef DO_WRITE_LOG
         log->start = my_int;
@@ -344,8 +353,7 @@ static void *thread_start(void *arg)
 	
 	// always increase.
 
-	k = set_removemin(shared.set);
-	//printf("K: %lu\n", k);
+	k = set_removemin(shared.set, id);
 	
 	//if (k > 1) { // success
 	del_cnt++;
@@ -353,16 +361,25 @@ static void *thread_start(void *arg)
 //	}
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
 	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
-	//k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
-	k = ok + gsl_ran_exponential (rng[id], intens);
+	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+//	printf("%d\n", (long)ceil(gsl_ran_exponential (rng[id], intens)));
+	//k = ok + gsl_ran_exponential (rng[id], intens);
 	
-	ov = set_update(shared.set, k, v);
+	set_update(shared.set, k, v);
 	//upd_cnt++; 
-    
+
 	now = read_tsc_p();
 	//sleep
 	while(read_tsc_p() - now < local)
 	    ;
+
+	sleeptime += read_tsc_p() - now;
+
+	if (lap < now) {
+	    lap = now + 2700000000;
+//	    printf("%d %d %d\n", id, lapn++, del_cnt - lapcnt);
+	    lapcnt = del_cnt;
+	}
 	
 #else
 	//if ( ((r>>4)&255) < prop )
@@ -433,6 +450,9 @@ static void *thread_start(void *arg)
     delete_successes[id] = del_cnt;
     update_successes[id] = upd_cnt;
     
+    __sync_fetch_and_add(&global_sleeptime, sleeptime);
+    
+
     return(NULL);
 }
 
@@ -451,7 +471,7 @@ static void test_multithreaded (void)
 
     if ( num_threads == 1 ) goto skip_thread_creation;
 
-    pthread_setconcurrency(num_threads);
+    pin(gettid(), 0);
     
 
     for (i = 0; i < num_threads; i ++)
@@ -506,6 +526,7 @@ static void test_multithreaded (void)
     log_float("us_per_success", (num_threads*wall_time*1000000.0)/num_successes);
 
     log_int("log max key", log_max_key);
+    printf("avg sleeptime: %llu\n", global_sleeptime/32);
 }
 
 #if defined(INTEL)
@@ -578,6 +599,9 @@ int main (int argc, char **argv)
 
     log_int ("max_iterations", MAX_ITERATIONS);
     log_int ("wall_time_limit_s", MAX_WALL_TIME);
+
+
+    
 
 #ifdef DO_WRITE_LOG
     log_header[0] = num_threads;

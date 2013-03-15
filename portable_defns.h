@@ -64,6 +64,8 @@ do {                                                                     \
  * POINTER MARKING
  */
 
+//#define USE_FAA
+
 #ifdef USE_FAA
 #warning using faa
 #define get_marked_ref(_p)      ((void *)(((unsigned long)(_p)) | 63))

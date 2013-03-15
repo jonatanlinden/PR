@@ -108,7 +108,7 @@ static node_t *alloc_node(ptst_t *ptst)
 /* Free a node to the garbage collector. */
 static void free_node(ptst_t *ptst, sh_node_pt n)
 {
-    //gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
+    gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
 }
 
 
@@ -185,6 +185,11 @@ static sh_node_pt weak_search_predecessors(
         {
             READ_FIELD(x_next, x->next[i]);
             x_next = get_unmarked_ref(x_next);
+	    
+	    if (x_next->next[0] == x)
+	    {
+		x_next_k = 0;
+	    }
 
             READ_FIELD(x_next_k, x_next->k);
             if ( x_next_k >= k ) break;
@@ -392,6 +397,50 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
 }
 
 
+setval_t set_remove(set_t *l, setkey_t k, ptst_t * ptst)
+{
+    setval_t  v = NULL, new_v;
+
+    sh_node_pt preds[NUM_LEVELS], x;
+    int        level, i;
+
+    //k = CALLER_TO_INTERNAL_KEY(k);
+
+    x = weak_search_predecessors(l, k, preds, NULL);
+    if ( x->k > k ) goto out; //shouldn't happen
+    READ_FIELD(level, x->level);
+    level = level & LEVEL_MASK;
+
+     /* Committed to @x: mark lower-level forward pointers. */
+    WEAK_DEP_ORDER_WMB(); /* enforce above as linearisation point */
+    mark_deleted(x, level);
+
+    /*
+     * We must swing predecessors' pointers, or we can end up with
+     * an unbounded number of marked but not fully deleted nodes.
+     * Doing this creates a bound equal to number of threads in the system.
+     * Furthermore, we can't legitimately call 'free_node' until all shared
+     * references are gone.
+     */
+    for ( i = level - 1; i >= 0; i-- )
+    {
+        if ( CASPO(&preds[i]->next[i], x, get_unmarked_ref(x->next[i])) != x )
+        {
+            if ( (i != (level - 1)) || check_for_full_delete(x) )
+            {
+                MB(); /* make sure we see node at all levels. */
+                do_full_delete(ptst, l, x, i);
+            }
+            goto out;
+        }
+    }
+
+    free_node(ptst, x);
+
+out:
+    return(v);
+}
+
 
 setkey_t set_removemin(set_t *l)
 {
@@ -409,7 +458,7 @@ setkey_t set_removemin(set_t *l)
 
     while (1)
     {
-	READ_FIELD(x_next, x->next[0]);
+	x_next = x->next[0];
 	x_next = get_unmarked_ref(x_next);
 	
 	// tail?
@@ -424,43 +473,15 @@ setkey_t set_removemin(set_t *l)
 	while ( (new_v = CASPO(&x_next->v, v, NULL)) != v );
 
 	x = x_next;
-	if (v != NULL) break;  //success
-	
+	if (v != NULL) 
+	{
+	    break;  //success
+	}
+
     }
+    x_k = x->k;    
 
-    READ_FIELD(x_k, x->k);
-    x = weak_search_predecessors(l, x_k, preds, NULL);
-
-    READ_FIELD(level, x->level);
-    level = level & LEVEL_MASK;
-
-    /* Committed to @x: mark lower-level forward pointers. */
-    WEAK_DEP_ORDER_WMB();
-/* enforce above as linearisation point */
-    mark_deleted(x, level);
-    
-    
-    /*
-     * We must swing predecessors' pointers, or we can end up with
-     * an unbounded number of marked but not fully deleted nodes.
-     * Doing this creates a bound equal to number of threads in the system.
-     * Furthermore, we can't legitimately call 'free_node' until all shared
-     * references are gone.
-     */
-    for ( i = level - 1; i >= 0; i-- )
-    {
-        if ( CASPO(&preds[i]->next[i], x, get_unmarked_ref(x->next[i])) != x )
-         {
-            if ( (i != (level - 1)) || check_for_full_delete(x) )
-            {
-                MB(); /* make sure we see node at all levels. */
-                do_full_delete(ptst, l, x, i);
-            }
-            goto out;
-        }
-    }
-
-    free_node(ptst, x);
+    set_remove(l, x_k, ptst);
 
 out:
     critical_exit(ptst);

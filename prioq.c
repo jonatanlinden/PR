@@ -252,6 +252,11 @@ set_alloc(int max_offset, int max_level)
     return l;
 }
 
+
+uint64_t ins_tot_time = 0;
+int cnt_ins = 1;
+
+
 void 
 set_update(set_t *l, setkey_t k, setval_t v)
 {
@@ -261,8 +266,14 @@ set_update(set_t *l, setkey_t k, setval_t v)
     int        i, level;
     sh_node_pt x, x_next;
     int loop0;
+    uint64_t start;
+    uint64_t old_time;
+    int old_cnt;
     
+
     ptst = critical_enter();
+
+
     
  retry:
     loop0 = 0;
@@ -273,6 +284,9 @@ set_update(set_t *l, setkey_t k, setval_t v)
         new->k = k;
         new->v = v;
     }
+
+    start = read_tsc_p(); // alloc is unavoidable
+
     level = new->level;
 
     weak_search_predecessors(l, k, preds, succs, 0);
@@ -360,6 +374,16 @@ set_update(set_t *l, setkey_t k, setval_t v)
         i++;
     }
 success:
+
+//    old_time = __sync_fetch_and_add(&ins_tot_time, read_tsc_p() - start);
+//    old_cnt = __sync_fetch_and_add(&cnt_ins, 1);
+
+//    if (!(old_cnt % 1000000)) {
+//	printf("ins: %"PRIu64"\n", old_time/old_cnt);
+//    }
+
+
+    
     critical_exit(ptst);
 }
 
@@ -367,8 +391,33 @@ success:
 __thread sh_node_pt pt, old_obs_hp;
 __thread int old_offset;
 
+
+typedef struct start_s {
+    node_t *start;
+    node_t *obshp;
+    char pad[48];
+} start_t;
+ 
+
+start_t starts[4] = {0};
+
+
+//#define OPTIM 1
+__thread int cheap_step_cnt = 0;
+__thread  int exp_step_cnt = 0;
+
+
+int tot_cnt = 1;
+
+#define MAXS 64
+
+uint64_t tot_time[MAXS*8] = {0};
+int cnt_rem[MAXS*8] = {1};
+ 
+#define NODEOPTIM
+
 setkey_t
-set_removemin(set_t *l)
+set_removemin(set_t *l, int id)
 {
     setval_t   v = NULL;
     setkey_t   k = 0;
@@ -376,73 +425,108 @@ set_removemin(set_t *l)
     sh_node_pt preds[NUM_LEVELS];
     sh_node_pt x, cur, x_next, obs_hp;
     int offset = 0, lvl = 0;
+    uint64_t start, end;
+    uint64_t old_time;
+    int old_cnt;
+    int loop = 1; 
+    int start_idx;
 
     ptst = critical_enter();
+    start = read_tsc_p();
 
+#ifdef THREADOPTIM
     if (old_obs_hp == l->head->next[0]) {
+	__sync_fetch_and_add(&cheap_step_cnt, 1);
 	x = pt;
     } else {
 	x = l->head;
 	old_offset = 0;
 	old_obs_hp = x->next[0];
+	__sync_fetch_and_add(&exp_step_cnt, 1);
     }
-    //x = &l->head;
-    //obs_hp = x->next[0];
+#endif //THREADOPTIM
 
+start:
+
+#ifdef NODEOPTIM
+    IRMB();
+    x_next = starts[id/8].start;
+    obs_hp = starts[id/8].obshp;
+    if (obs_hp == l->head->next[0]) {
+	__sync_fetch_and_add(&cheap_step_cnt, 1);
+	x = x_next;
+    } else {
+	x = l->head;
+	obs_hp = x->next[0];
+	__sync_fetch_and_add(&exp_step_cnt, 1);
+    }
+#endif //NODEOPTIM
     do {
 	offset++;
-#ifdef OPTIM
-	if((x->level & LEVEL_MASK) > 2 && is_marked_ref(x->next[2]->next[0]))
-	{
-	    x_next = x->next[2]->next[0];
-	    continue;
-	}
-#endif
-
+	IRMB();
 	x_next = x->next[0]; // expensive
-	// TODO: we must handle the case when we reach the end.
+
 	assert(x_next != END);
 	if (x_next == END) return NULL;
-	
-	if (!is_marked_ref(x_next)) { 
-	    /* the marker is on the preceding pointer */
-	    //x_next = FAO((sh_node_pt *)get_unmarked_ref(&x->next[0]), 1); /* linearisation */
-	    x_next = __sync_fetch_and_add((uint64_t *)&x->next[0], 1);
-	    /* linearisation */
+
+	// will break down if no one makes progress on node
+	if (offset > l->max_offset && (obs_hp != l->head->next[0] || obs_hp != starts[id/8].obshp)) {
+	    offset = 0;
+	    goto start;
 	}
+	
+
+	if (is_marked_ref(x_next)) continue;
+	    /* the marker is on the preceding pointer */
+            /* linearisation */
+	    x_next = FAO((sh_node_pt *)get_unmarked_ref(&x->next[0]), 1); 
+//	    x_next = __sync_fetch_and_add((uint64_t *)&x->next[0], 1);
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
 
     assert(!is_marked_ref(x_next));
     x = x_next;
+    end = read_tsc_p() - start;
+    
+    if (offset < MAXS) {
+    __sync_fetch_and_add(&tot_time[offset*8], end);
+    __sync_fetch_and_add(&cnt_rem[offset*8], 1);
+    }
 
+    old_cnt = __sync_fetch_and_add(&tot_cnt, 1);
+
+#ifdef THREADOPTIM
     pt = x;
     old_offset += offset;
+#endif
+
+    // distribute locally
+#ifdef NODEOPTIM
+    starts[id/8].obshp = obs_hp;
+    starts[id/8].start = x;
+#endif
 
     /* save value */
-    v = x_next->v;
-    k = x_next->k;
-
+    v = x->v;
+    k = x->k;
 
     /* if the offset is big enough, try to clean up 
      * we swing the hp to the new auxiliary node x (which is deleted) 
      */
-    obs_hp = old_obs_hp;
-    if (old_offset <= l->max_offset || l->head->next[0] != obs_hp) goto out;
+    //obs_hp = old_obs_hp;
+    if (offset <= l->max_offset || l->head->next[0] != obs_hp) goto out;
 
     x = get_marked_ref(x);
     /* fails if someone else already has updated the head node */
     if (obs_hp == CASPO(&l->head->next[0], obs_hp, x))
     {
-	assert(old_offset > l->max_offset);
+	
+	assert(offset > l->max_offset);
 	/* Here we own every node between old hp and x.	 */
-
 	/* retrieve the last deleted node for each level. */
 	/* will not change. */
 	lvl = weak_search_end(l, preds, -1);
 
-	/* bail out if next resutructuring have started */
-	if (l->head->next[0] != x) goto out;
 	// update upper levels
 	for (int i = lvl; i > 0; i--) {
 	    sh_node_pt next = l->head->next[i];
@@ -463,8 +547,15 @@ set_removemin(set_t *l)
     }
 out:
     
-    critical_exit(ptst);
     
+    if (!(old_cnt % 20000000)) {
+	for (int i = 0; i < MAXS*8; i+=8) 
+	    printf("%d %"PRIu64" %"PRIu64"\n",i/8, cnt_rem[i], tot_time[i]/(1+cnt_rem[i]));
+	printf("%d %d\n", cheap_step_cnt, exp_step_cnt);
+	printf("%d\n", tot_cnt);
+    }
+    
+    critical_exit(ptst);
     return k;
 }
 
@@ -565,21 +656,21 @@ seq_test ()
 
     set_update(q, (double)5.1, (void *)5);
     set_update(q, (double)7, (void *)7);
-    set_removemin(q);
+    set_removemin(q, 0);
     set_update(q, 6, (void *)6);
     set_update(q, 4, (void *)4);
-    set_removemin(q);
+    set_removemin(q, 0);
     set_update(q, 10, (void *)10);
     set_update(q, 9, (void *)9);
     
     set_remove(q, 10);
     set_update(q, 4, (void *)4);
-    set_removemin(q);
-    set_removemin(q);
-    set_removemin(q);
+    set_removemin(q,0);
+    set_removemin(q,0);
+    set_removemin(q,0);
     set_update(q, 4, (void *)4);
     pprint(q);
-    set_removemin(q);
+    set_removemin(q,0);
     pprint(q);
     
 }
@@ -591,12 +682,10 @@ void _init_set_subsystem(void)
     for ( i = 0; i < NUM_LEVELS; i++ )
     {
 	// aligned memory
-        gc_id[i] = gc_add_allocator(64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
+        //gc_id[i] = gc_add_allocator(64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
+	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
+	
     }
 }
-
-
-
-
 
 

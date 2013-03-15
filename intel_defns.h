@@ -74,6 +74,13 @@
  *  will!), then VOLATILE should be defined as 'volatile'.
  */
 
+
+#define IMB()    __asm__ __volatile__("mfence":::"memory")
+#define IRMB()   __asm__ __volatile__("lfence":::"memory")
+#define IWMB()   __asm__ __volatile__("sfence":::"memory")
+
+
+
 #define MB()  __sync_synchronize();//__asm__ __volatile__ ("lock; addl $0,0(%%esp)" : : : "memory")
 #define WMB() MB() //__asm__ __volatile__ ("" : : : "memory")
 #define RMB() MB()
