@@ -85,26 +85,4 @@
 #define MB_NEAR_CAS()  WMB()
 
 
-/*
- * III. Cycle counter access.
- */
-
-typedef unsigned long long tick_t;
-
-//#define RDTICK()({ tick_t __t; __asm__ __volatile__ ("rdtsc" : "=A" (__t)); __t; })
-
-
-/*
- * IV. Types.
- */
-
-typedef unsigned char      _u8;
-
-typedef unsigned short     _u16;
-
-typedef unsigned int       _u32;
-
-typedef unsigned long long _u64;
-
-
 #endif /* __INTEL_DEFNS_H__ */

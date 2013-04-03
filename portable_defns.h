@@ -49,16 +49,6 @@ do {                                                                    \
     ((void *)(((unsigned long)malloc((_s)+CACHE_LINE_SIZE*2) +  \
         CACHE_LINE_SIZE - 1) & ~(CACHE_LINE_SIZE-1)))
 
-/*
- * Interval counting
- */
-
-typedef unsigned int interval_t;
-#define get_interval(_i)                                                 \
-do {                                                                     \
-    interval_t _ni = interval;                                           \
-    do { _i = _ni; } while ( (_ni = CASIO(&interval, _i, _i+1)) != _i ); \
-} while ( 0 )
 
 /*
  * POINTER MARKING

@@ -1,11 +1,11 @@
 DEBUGGING := -g -O0
 
-CC          := gcc-4.8 -std=c99
+CC          := gcc -std=c99
 CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
-CFLAGS      += $(DEBUGGING)
-#CFLAGS       += -DNDEBUG
+#CFLAGS      += $(DEBUGGING)
+CFLAGS       += -DNDEBUG
 
 COMMON_DEPS += Makefile $(wildcard *.h)
 
@@ -26,7 +26,7 @@ replay: %: %.c $(COMMON_DEPS)
 %.o: %.c $(COMMON_DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(GC_HARNESS_TARGETS): %: %.o set_harness.o ptst.o gc.o
+$(GC_HARNESS_TARGETS): %: %.o set_harness.o ptst.o gc.o j_util.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 microtest: prioq.o ptst.o gc.o

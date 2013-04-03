@@ -40,10 +40,10 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <gsl/gsl_randist.h>
 #include "portable_defns.h"
 #include "ptst.h"
 #include "set.h"
-
 #include "j_util.h"
 
 /*
@@ -69,24 +69,13 @@ struct set_st
     node_t head;
 };
 
+
+__thread ptst_t *ptst;
 static int gc_id[NUM_LEVELS];
 
 /*
  * PRIVATE FUNCTIONS
  */
-
-/*
- * Random level generator. Drop-off rate is 0.5 per level.
- * Returns value 1 <= level <= NUM_LEVELS.
- */
-static int get_level(ptst_t *ptst)
-{
-    unsigned long r = rand_next(ptst);
-    int l = 1;
-    r = (r >> 4) & ((1 << (NUM_LEVELS-1)) - 1);
-    while ( (r & 1) ) { l++; r >>= 1; }
-    return(l);
-}
 
 
 /*
@@ -94,11 +83,11 @@ static int get_level(ptst_t *ptst)
  * NB. Initialisation will eventually be pushed into garbage collector,
  * because of dependent read reordering.
  */
-static node_t *alloc_node(ptst_t *ptst)
+static node_t *alloc_node()
 {
-    int l;
     node_t *n;
-    l = get_level(ptst);
+    unsigned int l = gsl_ran_geometric(ptst->rng, 0.5);
+    l = (l < 20) ? l : 20;
     n = gc_alloc(ptst, gc_id[l - 1]);
     n->level = l;
     return(n);
@@ -106,7 +95,7 @@ static node_t *alloc_node(ptst_t *ptst)
 
 
 /* Free a node to the garbage collector. */
-static void free_node(ptst_t *ptst, sh_node_pt n)
+static void free_node(sh_node_pt n)
 {
     gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
 }
@@ -235,11 +224,11 @@ static int check_for_full_delete(sh_node_pt x)
 }
 
 
-static void do_full_delete(ptst_t *ptst, set_t *l, sh_node_pt x, int level)
+static void do_full_delete(set_t *l, sh_node_pt x, int level)
 {
     int k = x->k;
     (void)strong_search_predecessors(l, k, NULL, NULL);
-    free_node(ptst, x);
+    free_node(x);
 }
 
 
@@ -279,7 +268,6 @@ set_t *set_alloc(int max_offset, int max_level)
 setval_t set_update(set_t *l, setkey_t k, setval_t v)
 {
     setval_t  ov, new_ov;
-    ptst_t    *ptst;
     sh_node_pt preds[NUM_LEVELS], succs[NUM_LEVELS];
     sh_node_pt pred, succ, new = NULL, new_next, old_next;
     int        i, level;
@@ -287,7 +275,7 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
     
     //k = CALLER_TO_INTERNAL_KEY(k);
 
-    ptst = critical_enter();
+    critical_enter();
 
     succ = weak_search_predecessors(l, k, preds, succs);
     
@@ -296,18 +284,13 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
 
     if ( succ->k == k )
     {
-	/* __sync_fetch_and_add(&samekey_cnt, 1); */
-	
-	/* if (!(samekey_cnt % 2000)) { */
-	/*     printf("sk: %d\n", samekey_cnt); */
-	/* } */
+        /* Already a @k node in the list: update its key. */
 
-        /* Already a @k node in the list: update its mapping. */
         new_ov = succ->v;
         do {
             if ( (ov = new_ov) == NULL )
             {
-                /* Finish deleting the node, then retry. */
+  
                 READ_FIELD(level, succ->level);
                 mark_deleted(succ, level & LEVEL_MASK);
                 succ = strong_search_predecessors(l, k, preds, succs);
@@ -316,14 +299,15 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
         }// always overwrite
         while ( 1 && ((new_ov = CASPO(&succ->v, ov, v)) != ov) );
 
-        if ( new != NULL ) free_node(ptst, new);
+        if ( new != NULL ) free_node(new);
         goto out;
+
     }
 
     /* Not in the list, so initialise a new node for insertion. */
     if ( new == NULL )
     {
-        new    = alloc_node(ptst);
+        new    = alloc_node();
         new->k = k;
         new->v = v;
     }
@@ -387,20 +371,19 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
     if ( check_for_full_delete(new) ) 
     {
         MB(); /* make sure we see all marks in @new. */
-        do_full_delete(ptst, l, new, level - 1);
+        do_full_delete(l, new, level - 1);
     }
  out:
     
-    critical_exit(ptst);
+    critical_exit();
 
     return(ov);
 }
 
 
-setval_t set_remove(set_t *l, setkey_t k, ptst_t * ptst)
+setval_t set_remove(set_t *l, setkey_t k)
 {
     setval_t  v = NULL, new_v;
-
     sh_node_pt preds[NUM_LEVELS], x;
     int        level, i;
 
@@ -429,13 +412,13 @@ setval_t set_remove(set_t *l, setkey_t k, ptst_t * ptst)
             if ( (i != (level - 1)) || check_for_full_delete(x) )
             {
                 MB(); /* make sure we see node at all levels. */
-                do_full_delete(ptst, l, x, i);
+                do_full_delete(l, x, i);
             }
             goto out;
         }
     }
 
-    free_node(ptst, x);
+    free_node(x);
 
 out:
     return(v);
@@ -446,13 +429,12 @@ setkey_t set_removemin(set_t *l)
 {
     setkey_t  k = 0;
     setval_t  v = NULL, new_v;
-    ptst_t    *ptst;
     sh_node_pt preds[NUM_LEVELS];
     int        level, i;
     sh_node_pt x, x_next;
     setkey_t  x_k;
     
-    ptst = critical_enter();
+    critical_enter();
 
     x = &l->head;
 
@@ -481,10 +463,10 @@ setkey_t set_removemin(set_t *l)
     }
     x_k = x->k;    
 
-    set_remove(l, x_k, ptst);
+    set_remove(l, x_k);
 
 out:
-    critical_exit(ptst);
+    critical_exit();
     return x_k;
 }
 
@@ -492,17 +474,16 @@ out:
 setval_t set_lookup(set_t *l, setkey_t k)
 {
     setval_t  v = NULL;
-    ptst_t    *ptst;
     sh_node_pt x;
 
     //k = CALLER_TO_INTERNAL_KEY(k);
 
-    ptst = critical_enter();
+    critical_enter();
 
     x = weak_search_predecessors(l, k, NULL, NULL);
     if ( x->k == k ) READ_FIELD(v, x->v);
 
-    critical_exit(ptst);
+    critical_exit();
     return(v);
 }
 

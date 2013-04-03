@@ -7,7 +7,7 @@
 #include "j_util.h"
 
 
-#ifdef LINUX
+
 pid_t 
 gettid(void) 
 {
@@ -43,7 +43,7 @@ getcoreid()
     }
     return b;
 }
-#endif
+
 /* works on linux systems */
 uint64_t 
 nsec_now (void) 

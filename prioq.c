@@ -61,7 +61,7 @@ static int gc_id[NUM_LEVELS];
 
 //unsigned int align_cnt;
 static node_t *
-alloc_node(ptst_t *ptst)
+alloc_node()
 {
     node_t *n;
     unsigned int l = gsl_ran_geometric(ptst->rng, 0.5);
@@ -74,7 +74,7 @@ alloc_node(ptst_t *ptst)
 
 /* Free a node to the garbage collector. */
 static void 
-free_node(ptst_t *ptst, node_t *n)
+free_node(node_t *n)
 {
     gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
 }
@@ -312,12 +312,6 @@ set_update(set_t *l, setkey_t k, setval_t v)
     }
 success:
 
-//    old_time = __sync_fetch_and_add(&ins_tot_time, read_tsc_p() - start);
-//    old_cnt = __sync_fetch_and_add(&cnt_ins, 1);
-
-    if (!(old_cnt % 5000000)) {
-	printf("ins: %d\n", old_cnt);
-    }
     
     critical_exit();
 }
@@ -327,31 +321,7 @@ __thread node_t *pt, *old_obs_hp;
 __thread int old_offset;
 
 
-typedef struct start_s {
-    node_t *start;
-    node_t *obshp;
-    char pad[48];
-} start_t;
- 
-
-start_t starts[4] = {0};
-
-
-//#define OPTIM 1
-__thread int cheap_step_cnt = 0;
-__thread  int exp_step_cnt = 0;
-
-
-int tot_cnt = 1;
-
-#define MAXS 16
-
-uint64_t tot_time[MAXS*8] = {0};
-int cnt_rem[MAXS*8] = {1};
- 
-//#define NODEOPTIM
 #define THREADOPTIM
-
 
 setkey_t
 set_removemin(set_t *l, int id)
@@ -361,43 +331,21 @@ set_removemin(set_t *l, int id)
     node_t *preds[NUM_LEVELS];
     node_t *x, *cur, *x_next, *obs_hp;
     int offset = 0, lvl = 0;
-    uint64_t start, end;
-    uint64_t old_time;
-    int old_cnt;
-    int loop = 1; 
-    int start_idx;
     
     critical_enter();
-    start = read_tsc_p();
+
 start:
 #ifdef THREADOPTIM
     IRMB();
     if (old_obs_hp == l->head->next[0]) {
-	__sync_fetch_and_add(&cheap_step_cnt, 1);
 	x = pt;
     } else {
 	x = l->head;
 	old_offset = 0;
 	offset = 0;
 	old_obs_hp = x->next[0];
-	__sync_fetch_and_add(&exp_step_cnt, 1);
     }
 #endif //THREADOPTIM
-
-
-#ifdef NODEOPTIM
-    IRMB();
-    x_next = starts[id/8].start;
-    obs_hp = starts[id/8].obshp;
-    if (obs_hp == l->head->next[0]) {
-	__sync_fetch_and_add(&cheap_step_cnt, 1);
-	x = x_next;
-    } else {
-	x = l->head;
-	obs_hp = x->next[0];
-	__sync_fetch_and_add(&exp_step_cnt, 1);
-    }
-#endif //NODEOPTIM
 
     do {
 	offset++;
@@ -417,14 +365,6 @@ start:
 
     assert(!is_marked_ref(x_next));
     x = x_next;
-    end = read_tsc_p() - start;
-    
-    if (offset < MAXS) {
-    __sync_fetch_and_add(&tot_time[offset*8], end);
-    __sync_fetch_and_add(&cnt_rem[offset*8], 1);
-    }
-
-    old_cnt = __sync_fetch_and_add(&tot_cnt, 1);
 
 #ifdef THREADOPTIM
     pt = x;
@@ -432,12 +372,6 @@ start:
     offset = old_offset;
     obs_hp = old_obs_hp;
     
-#endif
-
-    // distribute locally
-#ifdef NODEOPTIM
-    starts[id/8].obshp = obs_hp;
-    starts[id/8].start = x;
 #endif
 
     /* save value */
@@ -475,19 +409,12 @@ start:
 	 * Recycle all nodes from head pointer to the new logical head. */
 	x_next = get_unmarked_ref(obs_hp);
 	while (x_next != get_unmarked_ref(x)) {
-	    free_node(ptst, x_next);
+	    free_node(x_next);
 	    x_next = get_unmarked_ref(x_next->next[0]);
 	}
     }
 out:
-    
-    
-    if (!(old_cnt % 20000000)) {
-	for (int i = 0; i < MAXS*8; i+=8) 
-	    printf("%d %"PRIu64" %"PRIu64"\n",i/8, cnt_rem[i], tot_time[i]/(1+cnt_rem[i]));
-	printf("%d %d\n", cheap_step_cnt, exp_step_cnt);
-	printf("%d\n", tot_cnt);
-    }
+
     
     critical_exit();
     return k;

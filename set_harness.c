@@ -40,8 +40,10 @@
 
 #include <errno.h>
 
+#include <signal.h>
 
 #include <sys/time.h>
+
 #include <sys/times.h>
 
 #include <unistd.h>
@@ -156,16 +158,6 @@ static void dump_log (void) {
 
 #define TVAL(x) ((x.tv_sec * 1000000) + x.tv_usec)
 
-/* Log tables. Written out at end-of-day. */
-typedef struct log_st
-{
-    interval_t    start, end;
-    unsigned int  key;
-    void         *val, *old_val; /* @old_val used by update() and remove() */
-} log_t;
-#define SIZEOF_GLOBAL_LOG (num_threads*MAX_ITERATIONS*sizeof(log_t))
-static log_t *global_log;
-static interval_t interval = 0;
 
 unsigned long long max_key;
 
@@ -215,6 +207,7 @@ static void *thread_start(void *arg)
 
     v = (void *)8888888888;
 
+#define PIN
 #ifdef PIN
     //pin (gettid(), 4*(unsigned long)arg);
     // straight allocation
@@ -248,7 +241,7 @@ static void *thread_start(void *arg)
 
     if ( id == 0 )
     {
-        (void)signal(SIGALRM, &alarm_handler);
+	(void)signal(SIGALRM, &alarm_handler);
         (void)alarm(MAX_WALL_TIME);
         WMB();
         gettimeofday(&start_time, NULL);
@@ -287,7 +280,7 @@ static void *thread_start(void *arg)
 //	}
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
 	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
-	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+	k = ok + max_key;//1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
 
 	
 	set_update(shared.set, k, v);
@@ -309,13 +302,6 @@ static void *thread_start(void *arg)
     }
     while ( threads_initialised3 != num_threads ) MB();
 
-#if 0
-    if ( id == 0 )
-    {
-        extern void check_tree(set_t *);
-        check_tree(shared.set);
-    }
-#endif
 
     if ( id == num_threads - 1 )
     {
@@ -406,32 +392,6 @@ static void test_multithreaded (void)
     printf("avg sleeptime: %llu\n", global_sleeptime/32);
 }
 
-/*#if defined(INTEL)
-static void tstp_handler(int sig, siginfo_t *info, ucontext_t *uc)
-{
-    static unsigned int sem = 0;
-    unsigned long *esp = (unsigned long *)(uc->uc_mcontext.gregs[7]);
-    int pid = getpid();
-
-    while ( CASIO(&sem, 0, 1) != 0 ) sched_yield();
-
-    printf("Signal %d for pid %d\n", sig, pid);
-    printf("%d: EIP=%08x  EAX=%08x  EBX=%08x  ECX=%08x  EDX=%08x\n", pid,
-           uc->uc_mcontext.gregs[14], uc->uc_mcontext.gregs[11],
-           uc->uc_mcontext.gregs[ 8], uc->uc_mcontext.gregs[10],
-           uc->uc_mcontext.gregs[ 9]);
-    printf("%d: ESP=%08x  EBP=%08x  ESI=%08x  EDI=%08x  EFL=%08x\n", pid,
-           uc->uc_mcontext.gregs[ 7], uc->uc_mcontext.gregs[ 6],
-           uc->uc_mcontext.gregs[ 5], uc->uc_mcontext.gregs[ 4],
-           uc->uc_mcontext.gregs[16]);
-    printf("\n");
-
-    sem = 0;
-
-    for ( ; ; ) sched_yield();
-}
-#endif
-*/
 int main (int argc, char **argv)
 {
 
@@ -466,23 +426,9 @@ int main (int argc, char **argv)
     log_int ("wall_time_lim_s", MAX_WALL_TIME);
 
 
-/* #if defined(INTEL) */
-/*     { */
-/*         struct sigaction act; */
-/*         memset(&act, 0, sizeof(act)); */
-/*         act.sa_handler = (void *)tstp_handler; */
-/*         act.sa_flags = SA_SIGINFO; */
-/*         sigaction(SIGTSTP, &act, NULL); */
-/*         sigaction(SIGQUIT, &act, NULL); */
-/*         sigaction(SIGSEGV, &act, NULL); */
-/*     } */
-/* #endif */
-
     test_multithreaded ();
     
     dump_log ();
-
-
     exit(0);
 }
 
