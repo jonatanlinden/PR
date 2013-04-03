@@ -2,6 +2,7 @@
 #include <float.h>
 
 typedef unsigned long setkey_t;
+#define SETKEY_NULL 0
 //typedef double setkey_t;
 typedef void         *setval_t;
 
@@ -23,7 +24,7 @@ typedef void         *setval_t;
 
 
 
-#define END (sh_node_pt) 0xfefefefefefefefe
+#define END (node_t *) 0xfefefefefefefefe
 //#define END (sh_node_pt) 0xc0c0c0c0c0c0c0c0
 
 
@@ -41,13 +42,12 @@ typedef struct node_s
     struct node_s *next[1];
 } node_t;
 
-typedef node_t *sh_node_pt;
-
 typedef struct set_s
 {
     int max_offset;
     int max_level;
-//    node_t head;
+    int nthreads;
+    
     node_t *head;
 } set_t;
 
@@ -58,7 +58,7 @@ extern void _init_set_subsystem(void);
 
 /* use_this externally */
 
-extern set_t *set_alloc(int max_offset, int max_level);
+extern set_t *set_alloc(int max_offset, int max_level, int nthreads);
 
 extern void set_update(set_t *s, setkey_t k, setval_t v);
 
