@@ -20,7 +20,7 @@
  * This is a strong barrier! Reads cannot be delayed beyond a later store.
  * Reads cannot be hoisted beyond a LOCK prefix. Stores always in-order.
  */
-#define CAS(_a, _o, _n)                                    \
+/*#define CAS(_a, _o, _n)				       \
     ({ __typeof__(_o) __o = _o;                                \
 	__asm__ __volatile__(                                   \
        "lock cmpxchg %3,%1"                                \
@@ -28,6 +28,9 @@
        :  "0" (__o), "r" (_n) );                           \
 	__o;                                                    \
     })
+*/
+
+#define CAS(_a, _o, _n) __sync_val_compare_and_swap(_a, _o, _n)
 
 #define FAO(_a, _n) __sync_fetch_and_or(_a, _n)
 
@@ -42,17 +45,7 @@
 	__o;                                                    \
     })
 
-#define CAS64(_a, _o, _n)                                        \
-    ({ __typeof__(_o) __o = _o;                                      \
-	__asm__ __volatile__(                                         \
-       "movl %3, %%ecx;"                                         \
-       "movl %4, %%ebx;"                                         \
-       "lock cmpxchg8b %1"                                       \
-       : "=A" (__o), "=m" (*(volatile unsigned long long *)(_a)) \
-       : "0" (__o), "rm" (_n >> 32), "rm" (_n)                     \
-       : "ebx", "ecx" );                                         \
-	__o;                                                          \
-    })
+
 
 /* Update Integer location, return Old value. */
 #define CASIO CAS
@@ -98,7 +91,7 @@
 
 typedef unsigned long long tick_t;
 
-#define RDTICK()({ tick_t __t; __asm__ __volatile__ ("rdtsc" : "=A" (__t)); __t; })
+//#define RDTICK()({ tick_t __t; __asm__ __volatile__ ("rdtsc" : "=A" (__t)); __t; })
 
 
 /*

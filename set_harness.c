@@ -35,21 +35,16 @@
 
 #define _GNU_SOURCE
 
-#include <sys/resource.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+
 #include <errno.h>
-#include <sys/stat.h>
-#include <sys/types.h>
+
+
 #include <sys/time.h>
 #include <sys/times.h>
-#include <sys/mman.h>
-#include <fcntl.h>
+
 #include <unistd.h>
-//#include <ucontext.h>
-#include <signal.h>
-#include <sched.h>
 #include <limits.h>
 #include <assert.h>
 #include <stdarg.h>
@@ -60,45 +55,17 @@
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
 
-
-
 #include "portable_defns.h"
-//#include "set.h"
 #include "prioq.h"
 #include "ptst.h"
 #include "j_util.h"
 
 
-/* This produces an operation log for the 'replay' checker. */
-//#define DO_WRITE_LOG
 
-#ifdef DO_WRITE_LOG
-#define MAX_ITERATIONS 100000
-#define MAX_WALL_TIME 50 /* seconds */
-#else
 #define MAX_ITERATIONS 100000000
 #define MAX_WALL_TIME 10 /* seconds */
-#endif
-
-pid_t 
-gettid(void) 
-{
-    return (pid_t) syscall(SYS_gettid);
-}
-
-
-void
-pin(pid_t t, int cpu) 
-{
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(cpu, &cpuset);
-    sched_setaffinity(t, sizeof(cpu_set_t), &cpuset);
-}
-
 
 gsl_rng *rng[64];
-
 
 
 /*
@@ -149,14 +116,11 @@ static void dump_log (void) {
 
     fprintf (stdout, "-------------------------------------------"
              "---------------------------\n");
+
     for (i = 0; i < num_log_records; i ++)
     {
-        char padding[40];
-        strcpy(padding, "                                        ");
-        if (30-strlen(log_records[i].name) >= 0){
-            padding[30-strlen(log_records[i].name)] = '\0';
-        }
-        fprintf (stdout, "%s%s = ", padding, log_records[i].name);
+
+        fprintf (stdout, "%s\t = ", log_records[i].name);
         {
             int kind = log_records [i].kind;
             if (kind == LOG_KIND_INT) {
@@ -211,11 +175,8 @@ static int threads_initialised2 = 0, max_offset;
 static int threads_initialised3 = 0;
 int num_threads;
 
-static unsigned long proportion;
 static unsigned long arrival_intensity;
 static unsigned long local_comp;
-
-
 
 static struct timeval start_time, done_time;
 static struct tms start_tms, done_tms;
@@ -234,8 +195,6 @@ static struct {
     CACHE_PAD(2);
 } shared;
 
-#define nrand(_r) (((_r) = (_r) * 1103515245) + 12345)
-
 static void alarm_handler( int arg)
 {
     shared.alarm_time = 1;
@@ -248,53 +207,37 @@ static void *thread_start(void *arg)
     setkey_t k, ok;
     int i;
     void *ov, *v;
-    int id = (int)arg;
-#ifdef DO_WRITE_LOG
-    log_t *log = global_log + id*MAX_ITERATIONS;
-    interval_t my_int;
-#endif
+    long id = (long)arg;
+
     unsigned long r = ((unsigned long)arg)+3; /*RDTICK();*/
     unsigned int intens = arrival_intensity;
     unsigned int local = local_comp;
 
+    v = (void *)8888888888;
+
+#ifdef PIN
     //pin (gettid(), 4*(unsigned long)arg);
     // straight allocation
     pin (gettid(), id/8 + 4*(id % 8));
-    
+#endif
 
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
     
-
     if ( id == 0 )
     {
-        _init_ptst_subsystem();
         _init_gc_subsystem();
         _init_set_subsystem();
-        shared.set = set_alloc(max_offset, 20);
+        shared.set = set_alloc(max_offset, 20, num_threads);
     }
 
-    /* BARRIER FOR ALL THREADS */
-    {
-        int n_id, id = threads_initialised1;
-        while ( (n_id = CASIO(&threads_initialised1, id, id+1)) != id )
-            id = n_id;
-    }
-    while ( threads_initialised1 != num_threads ) MB();
-
-#ifndef DO_WRITE_LOG
     /* Start search structure off with a well-distributed set of inital keys */
 
     if (id == 0) {
-    for (i = 1; i < max_key; i++) {
-	set_update(shared.set,(double) i, (void *)i+1);//(void *)0xdeadbee0, 1);
+	for (i = 1; i < max_key; i++) {
+	    set_update(shared.set,(double) i, v);
+	}
     }
-    printf("init ready\n");
-    printf("num elements: %llu\n", max_key);
-    
-    }
-
-#endif
 
     {
         int n_id, id = threads_initialised2;
@@ -321,38 +264,21 @@ static void *thread_start(void *arg)
     int upd_cnt = 0;
     ov = NULL;
     ok = 0;
-    
-#ifdef DO_WRITE_LOG
-    get_interval(my_int);
-#endif
+
     uint64_t now;
     uint64_t lap = read_tsc_p() + 2700000000;
-    long lapcnt = 0;
-    long lapn = 0;
     uint64_t sleeptime  = 0;
 
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
     {
-	//k = (nrand(r) >> 4) & (_max_key - 1);
-	
-	if 
-
-        nrand(r);
-#ifdef DO_WRITE_LOG
-        log->start = my_int;
-#endif
-
-
-#define DETERM
 
 	/***********************************************
 	 * Deterministic execution.
 	 */
-#ifdef DETERM
-	v = (void *)((r&~7)|0x8);
+
+	v = (void *)99999999999;
 	
 	// always increase.
-
 	k = set_removemin(shared.set, id);
 	
 	//if (k > 1) { // success
@@ -362,12 +288,9 @@ static void *thread_start(void *arg)
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
 	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
 	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
-//	printf("%d\n", (long)ceil(gsl_ran_exponential (rng[id], intens)));
-	//k = ok + gsl_ran_exponential (rng[id], intens);
+
 	
 	set_update(shared.set, k, v);
-	//upd_cnt++; 
-
 	now = read_tsc_p();
 	//sleep
 	while(read_tsc_p() - now < local)
@@ -375,52 +298,7 @@ static void *thread_start(void *arg)
 
 	sleeptime += read_tsc_p() - now;
 
-	if (lap < now) {
-	    lap = now + 2700000000;
-//	    printf("%d %d %d\n", id, lapn++, del_cnt - lapcnt);
-	    lapcnt = del_cnt;
-	}
-	
-#else
-	//if ( ((r>>4)&255) < prop )
-	//{
-	//ov = v = set_lookup(shared.set, k);
-	//}
-	
-	if ( ((r>>12)&1) )
-	{
-            v = (void *)((r&~7)|0x8);
-	    // always increase... (geometric dist.)
-	    k = (long)ceil(gsl_ran_exponential (rng[id], intens));
-	    k = ok + k;
-	    //k = ok + gsl_ran_geometric (rng[id], 0.001);
-	
-	    //if (!(i % 1000000)) {
-	    //printf("new k: %llu\n", k);
-	    //}
 
-            ov = set_update(shared.set, k, v);
-	    upd_cnt++;
-	} else {
-            k = set_removemin(shared.set);
-
-	    v = NULL;
-	    if (k > 1) {
-		del_cnt++;
-		ok = k;
-	    }
-        }
-
-#endif
-
-#ifdef DO_WRITE_LOG
-        get_interval(my_int);
-        log->key = k;
-        log->val = v;
-        log->old_val = ov;
-        log->end = my_int;
-        log++;
-#endif
     }
 
     /* BARRIER FOR ALL THREADS */
@@ -461,7 +339,7 @@ static void *thread_start(void *arg)
 
 static void test_multithreaded (void)
 {
-    int                 i, fd;
+    int fd;
     pthread_t            thrs[MAX_THREADS];
     int num_successes;
     int num_upd_successes;
@@ -471,10 +349,11 @@ static void test_multithreaded (void)
 
     if ( num_threads == 1 ) goto skip_thread_creation;
 
+#ifdef PIN
     pin(gettid(), 0);
-    
+#endif
 
-    for (i = 0; i < num_threads; i ++)
+    for (long i = 0; i < num_threads; i ++)
     {
         MB();
         pthread_create (&thrs[i], NULL, THREAD_TEST, (void *)i);
@@ -489,7 +368,7 @@ static void test_multithreaded (void)
     }
     else
     {
-        for (i = 0; i < num_threads; i ++)
+        for (int i = 0; i < num_threads; i ++)
         {
             (void)pthread_join (thrs[i], NULL);
         }
@@ -508,28 +387,26 @@ static void test_multithreaded (void)
     
     min_successes = INT_MAX;
     max_successes = INT_MIN;
-    for ( i = 0; i < num_threads; i++ )
+    for (int i = 0; i < num_threads; i++ )
     {
         num_successes += delete_successes[i];
 	num_upd_successes += update_successes[i];
-	//printf("tid %d: del successes: %d\n", i,delete_successes[i]);
-	//printf("tid %d: upd successes: %d\n", i,update_successes[i]);
 	
         if ( delete_successes[i] < min_successes ) min_successes = delete_successes[i];
         if ( delete_successes[i] > max_successes ) max_successes = delete_successes[i];
     }
 
-    log_int ("min_successes", min_successes);
-    log_int ("max_successes", max_successes);
-    log_int ("num_del_successes", num_successes);
-    log_int ("num_upd_successes", num_upd_successes);
-    log_float("us_per_success", (num_threads*wall_time*1000000.0)/num_successes);
+    log_int ("min_succ", min_successes);
+    log_int ("max_succ", max_successes);
+    log_int ("num_del_succ", num_successes);
+    log_int ("num_upd_succ", num_upd_successes);
+    log_float("us_per_succ", (num_threads*wall_time*1000000.0)/num_successes);
 
     log_int("log max key", log_max_key);
     printf("avg sleeptime: %llu\n", global_sleeptime/32);
 }
 
-#if defined(INTEL)
+/*#if defined(INTEL)
 static void tstp_handler(int sig, siginfo_t *info, ucontext_t *uc)
 {
     static unsigned int sem = 0;
@@ -554,37 +431,25 @@ static void tstp_handler(int sig, siginfo_t *info, ucontext_t *uc)
     for ( ; ; ) sched_yield();
 }
 #endif
-
+*/
 int main (int argc, char **argv)
 {
-#ifdef DO_WRITE_LOG
-    int fd;
-    unsigned long log_header[] = { 0, MAX_ITERATIONS, 0 };
 
-    if ( argc != 7 )
-    {
-        printf("%s <num_threads> <arrival_intens> <key power> <log name>\n"
-               , argv[0]);
-        exit(1);
-    }
-#else
     if ( argc != 6 )
     {
         printf("%s <num_threads> <arrival_intens> <key power> <max_offset> <local_comp>\n"
                , argv[0]);
         exit(1);
     }
-#endif
 
     memset(&shared, 0, sizeof(shared));
 
     num_threads = atoi(argv[1]);
     log_int ("num_threads", num_threads);
 
-    proportion = 0;
 
     arrival_intensity = atoi(argv[2]);
-    log_int("arrival_intensity", arrival_intensity);
+    log_int("arrival_intens", arrival_intensity);
     
     log_max_key = atoi(argv[3]);
     max_key = 1ULL << atoi(argv[3]);
@@ -598,16 +463,8 @@ int main (int argc, char **argv)
 
 
     log_int ("max_iterations", MAX_ITERATIONS);
-    log_int ("wall_time_limit_s", MAX_WALL_TIME);
+    log_int ("wall_time_lim_s", MAX_WALL_TIME);
 
-
-    
-
-#ifdef DO_WRITE_LOG
-    log_header[0] = num_threads;
-    log_header[2] = max_key;
-    global_log = malloc(SIZEOF_GLOBAL_LOG);
-#endif
 
 /* #if defined(INTEL) */
 /*     { */
@@ -622,29 +479,9 @@ int main (int argc, char **argv)
 /* #endif */
 
     test_multithreaded ();
-
+    
     dump_log ();
 
-#ifdef DO_WRITE_LOG
-    printf("Writing log...\n");
-    /* Write logs to data file */
-    fd = open(argv[5], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if ( fd == -1 )
-    {
-        fprintf(stderr, "Error writing log!\n");
-        exit(-1);
-    }
-
-    if ( (write(fd, log_header, sizeof(log_header)) != sizeof(log_header)) ||
-         (write(fd, global_log, SIZEOF_GLOBAL_LOG) != SIZEOF_GLOBAL_LOG) )
-    {
-        fprintf(stderr, "Log write truncated or erroneous\n");
-        close(fd);
-        exit(-1);
-    }
-
-    close(fd);
-#endif
 
     exit(0);
 }

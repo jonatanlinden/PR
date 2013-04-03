@@ -40,63 +40,38 @@
 #include <string.h>
 #include "portable_defns.h"
 #include "ptst.h"
+#include "j_util.h"
 
+ptst_t *ptst_list = NULL;
+extern __thread ptst_t *ptst;
+static unsigned int next_id = 0;
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "portable_defns.h"
-#include "ptst.h"
-
-
-pthread_key_t ptst_key;
-
-ptst_t *ptst_list;
-
-
-static unsigned int next_id;
-
-
-ptst_t *critical_enter(void)
+void
+critical_enter()
 {
-    ptst_t *ptst, *next, *new_next;
-    unsigned int id, oid;
+    ptst_t *next, *new_next;
 
-    ptst = (ptst_t *)pthread_getspecific(ptst_key);
     if ( ptst == NULL ) 
     {
-        for ( ptst = ptst_first(); ptst != NULL; ptst = ptst_next(ptst) ) 
-        {
-            if ( (ptst->count == 0) && (CASIO(&ptst->count, 0, 1) == 0) ) 
-            {
-                break;
-            }
-        }
-        
-        if ( ptst == NULL ) 
-        {
-            ptst = ALIGNED_ALLOC(sizeof(*ptst));
-            if ( ptst == NULL ) exit(1);
-            memset(ptst, 0, sizeof(*ptst));
-            ptst->gc = gc_init();
-            rand_init(ptst);
-            ptst->count = 1;
-            id = next_id;
-            while ( (oid = CASIO(&next_id, id, id+1)) != id ) id = oid;
-            ptst->id = id;
-            new_next = ptst_list;
-            do {
-                ptst->next = next = new_next;
-                WMB_NEAR_CAS();
-            } 
-            while ( (new_next = CASPO(&ptst_list, next, ptst)) != next );
-        }
-        
-        pthread_setspecific(ptst_key, ptst);
+	ptst = (ptst_t *) ALIGNED_ALLOC(sizeof(ptst_t));
+	if ( ptst == NULL ) exit(1);
+	    
+	memset(ptst, 0, sizeof(ptst_t));
+	ptst->gc = gc_init();
+	ptst->rng = gsl_rng_alloc(gsl_rng_taus2);
+	ptst->count = 1;
+	ptst->id = __sync_fetch_and_add(&next_id, 1);
+
+	new_next = ptst_list;
+	do {
+	    ptst->next = next = new_next;
+	    WMB_NEAR_CAS();
+	} 
+	while ( (new_next = CASPO(&ptst_list, next, ptst)) != next );
     }
     
     gc_enter(ptst);
-    return(ptst);
+    return;
 }
 
 
@@ -104,19 +79,6 @@ ptst_t *critical_enter(void)
 static void ptst_destructor(ptst_t *ptst) 
 {
     ptst->count = 0;
-}
-
-
-
-void _init_ptst_subsystem(void) 
-{
-    ptst_list = NULL;
-    next_id   = 0;
-    WMB();
-    if ( pthread_key_create(&ptst_key, (void (*)(void *))ptst_destructor) )
-    {
-        exit(1);
-    }
 }
 
 

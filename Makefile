@@ -1,7 +1,6 @@
-
 DEBUGGING := -g -O0
 
-CC          := gcc -std=c99
+CC          := gcc-4.8 -std=c99
 CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
