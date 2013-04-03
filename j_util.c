@@ -6,12 +6,13 @@
 #include <assert.h>
 #include "j_util.h"
 
+
+#ifdef LINUX
 pid_t 
 gettid(void) 
 {
     return (pid_t) syscall(SYS_gettid);
 }
-
 
 void
 pin(pid_t t, int cpu) 
@@ -21,6 +22,8 @@ pin(pid_t t, int cpu)
   CPU_SET(cpu, &cpuset);
   E_en(sched_setaffinity(t, sizeof(cpu_set_t), &cpuset));
 }
+
+
 
 int
 getcoreid() 
@@ -40,7 +43,7 @@ getcoreid()
     }
     return b;
 }
-
+#endif
 /* works on linux systems */
 uint64_t 
 nsec_now (void) 

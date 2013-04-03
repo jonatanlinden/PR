@@ -333,9 +333,9 @@ static chunk_t *get_alloc_chunk(gc_t *gc, int i)
  * current epoch, the "nearly-free" lists from the previous epoch are 
  * reclaimed, and the epoch is incremented.
  */
-static void gc_reclaim(void)
+static void gc_reclaim(ptst_t * our_ptst)
 {
-    ptst_t       *ptst, *first_ptst, *our_ptst = NULL;
+    ptst_t       *ptst, *first_ptst; //, *our_ptst = NULL;
     gc_t         *gc = NULL;
     unsigned long curr_epoch;
     chunk_t      *ch, *t;
@@ -364,29 +364,14 @@ static void gc_reclaim(void)
      */
     two_ago   = (curr_epoch+2) % NR_EPOCHS;
     three_ago = (curr_epoch+1) % NR_EPOCHS;
-    if ( gc_global.nr_hooks != 0 )
-        our_ptst = (ptst_t *)pthread_getspecific(ptst_key);
+    //if ( gc_global.nr_hooks != 0 )
+        //our_ptst = (ptst_t *)pthread_getspecific(ptst_key);
     for ( ptst = first_ptst; ptst != NULL; ptst = ptst_next(ptst) )
     {
         gc = ptst->gc;
 
         for ( i = 0; i < gc_global.nr_sizes; i++ )
         {
-#ifdef WEAK_MEM_ORDER
-            int sz = gc_global.blk_sizes[i];
-            if ( gc->garbage[two_ago][i] != NULL )
-            {
-                chunk_t *head = gc->garbage[two_ago][i];
-                ch = head;
-                do {
-                    int j;
-                    for ( j = 0; j < ch->i; j++ )
-                        INITIALISE_NODES(ch->blk[j], sz);
-                }
-                while ( (ch = ch->next) != head );
-            }
-#endif
-
             /* NB. Leave one chunk behind, as it is probably not yet full. */
             t = gc->garbage[three_ago][i];
             if ( (t == NULL) || ((ch = t->next) == t) ) continue;
@@ -570,7 +555,7 @@ void gc_enter(ptst_t *ptst)
             }
 #endif
             gc->entries_since_reclaim = 0;
-            gc_reclaim();
+            gc_reclaim(ptst);
             goto retry;    
         }
     }
