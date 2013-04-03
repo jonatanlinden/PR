@@ -43,33 +43,15 @@
 #include <math.h>
 #include <stdint.h>
 #include <inttypes.h>
-
-
 #include "portable_defns.h"
 #include "prioq.h"
 #include "ptst.h"
 #include "j_util.h"
+#include <gsl/gsl_randist.h>
 
-
+__thread ptst_t *ptst;
 static int gc_id[NUM_LEVELS];
 
-/*
- * PRIVATE FUNCTIONS
- */
-
-/*
- * Random level generator. Drop-off rate is 0.5 per level.
- * Returns value 1 <= level <= NUM_LEVELS.
- */
-static int
-get_level(ptst_t *ptst)
-{
-    unsigned long r = rand_next(ptst);
-    int l = 1;
-    r = (r >> 4) & ((1 << (NUM_LEVELS-1)) - 1);
-    while ( (r & 1) ) { l++; r >>= 1; }
-    return l;
-}
 
 /*
  * Allocate a new node, and initialise its @level field.
@@ -81,64 +63,35 @@ get_level(ptst_t *ptst)
 static node_t *
 alloc_node(ptst_t *ptst)
 {
-    int l;
     node_t *n;
-    l = get_level(ptst);
+    unsigned int l = gsl_ran_geometric(ptst->rng, 0.5);
+    l = (l < 20) ? l : 20;
     n = gc_alloc(ptst, gc_id[l - 1]);
     n->level = l;
-//    if (!((uintptr_t)n & 0x7F)) {
-//	unsigned int old = __sync_fetch_and_add(&align_cnt, 1);
-//	if (!(old % 10000)) {
-//	    printf("%u\n", old);
-//	}
-//    }
-    
     return n;
 }
 
 
 /* Free a node to the garbage collector. */
 static void 
-free_node(ptst_t *ptst, sh_node_pt n)
+free_node(ptst_t *ptst, node_t *n)
 {
     gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
 }
 
 
-static sh_node_pt 
-weak_search_head(set_t *l)
-{
-    sh_node_pt x, x_next;
-    setkey_t  x_next_k;
-    int        i;
-    x = l->head;
-    for ( i = NUM_LEVELS - 1; i >= 0; i-- )
-    {
-        for ( ; ; )
-        {
-            x_next = x->next[i];
-            x_next = get_unmarked_ref(x_next);
-	    if (x_next == END) break;
-	    if (!is_marked_ref(x_next->next[0])) break;
-	    x = x_next;
-	}
-    }
-    return x_next;
-}
-
 
 static int
-weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
+weak_search_end(set_t *l, node_t **pa, int toplvl)
 {
-    sh_node_pt x, x_next;
+    node_t *x, *x_next;
     setkey_t  x_next_k;
-    int        i;
     int lvl = 0;
     int start_lvl = toplvl == -1 ? NUM_LEVELS - 1 : toplvl;
     if (toplvl > 0) lvl = toplvl;
     
     x = l->head;
-    for ( i = start_lvl; i >= 1; i-- )
+    for (int i = start_lvl; i >= 1; i-- )
     {
         for ( ; ; )
         {
@@ -166,16 +119,15 @@ weak_search_end(set_t *l, sh_node_pt *pa, int toplvl)
  *  MAIN RETURN VALUE: same as @na[0].
  */
 /* This function does not remove marked nodes. Use it optimistically. */
-static sh_node_pt
+static node_t *
 weak_search_predecessors(set_t *l, setkey_t k,
-			 sh_node_pt *pa, sh_node_pt *na, int bef)
+			 node_t **pa, node_t **na, int bef)
 {
-    sh_node_pt x, x_next;
+    node_t *x, *x_next;
     setkey_t  x_next_k;
-    int        i;
 restart:
     x = l->head;
-    for ( i = NUM_LEVELS - 1; i >= 0; i-- )
+    for (int i = NUM_LEVELS - 1; i >= 0; i-- )
     {
         for ( ; ; )
         {
@@ -197,23 +149,22 @@ restart:
 }
 
 
-
 /*
  * PUBLIC FUNCTIONS
  */
 
 set_t *
-set_alloc(int max_offset, int max_level)
+set_alloc(int max_offset, int max_level, int nthreads)
 {
     set_t *l;
     node_t *t, *h;
     int i;
 
     t = malloc(63+sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    t = ((uintptr_t)t+63) & ~(size_t)0x3F;
+    t = (node_t *) (((uintptr_t)t+63) & ~(size_t)0x3F);
     memset(t, 0, sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
     h = malloc(63+sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    h = ((uintptr_t)h+63) & ~(size_t)0x3F;
+    h = (node_t *) (((uintptr_t)h+63) & ~(size_t)0x3F);
     memset(h, 0, sizeof(*h) + (NUM_LEVELS-1)*sizeof(node_t *));
 
     assert(((unsigned long)t & 0x3FLU) == 0);
@@ -230,8 +181,6 @@ set_alloc(int max_offset, int max_level)
 
     printf("sentinel max: %lu\n", t->k);
     /*
-     * Set the forward pointers of final node to other than NULL,
-     * otherwise READ_FIELD() will continually execute costly barriers.
      * Note use of 0xfe -- that doesn't look like a marked value!
      */
 #ifdef USE_FAA
@@ -240,43 +189,35 @@ set_alloc(int max_offset, int max_level)
     memset(t->next, 0xfe, NUM_LEVELS*sizeof(node_t *));
 #endif
 
-
     l = malloc(sizeof(*l) + (NUM_LEVELS-1)*sizeof(node_t *));
     l->head = h;
     l->max_offset = max_offset;
     l->max_level  = max_level;
-
+    l->nthreads = nthreads;
+    
     assert((sizeof(int)+sizeof(setval_t) + sizeof(setkey_t) + 44) == CACHE_LINE_SIZE);
     printf("nodesize: %d\n", (int) sizeof(node_t));
 
     return l;
 }
 
-
 uint64_t ins_tot_time = 0;
 int cnt_ins = 1;
-
 
 void 
 set_update(set_t *l, setkey_t k, setval_t v)
 {
-    ptst_t    *ptst;
-    sh_node_pt preds[NUM_LEVELS], succs[NUM_LEVELS];
-    sh_node_pt pred, succ, new = NULL, new_next, old_next;
+    node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
+    node_t *pred, *succ, *new = NULL, *new_next, *old_next;
     int        i, level;
-    sh_node_pt x, x_next;
-    int loop0;
+    node_t *x, *x_next;
     uint64_t start;
     uint64_t old_time;
     int old_cnt;
-    
 
-    ptst = critical_enter();
-
-
+    critical_enter();
     
  retry:
-    loop0 = 0;
     /* Initialise a new node for insertion. */
     if ( new == NULL )
     {
@@ -285,7 +226,7 @@ set_update(set_t *l, setkey_t k, setval_t v)
         new->v = v;
     }
 
-    start = read_tsc_p(); // alloc is unavoidable
+    start = read_tsc_p(); // alloc is unavoidable, meas time from here
 
     level = new->level;
 
@@ -310,11 +251,6 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	    new->level = 1;
 	    x = get_unmarked_ref(preds[0]->next[0]);
 	    do {
-		loop0 ++;
-		if (loop0 > 10) {
-		    x = weak_search_head(l);
-		    loop0 = 0;
-		}
 		x_next = x->next[0];
 		if (!is_marked_ref(x_next)) {
 		    /* The marker is on the preceding pointer. 
@@ -336,6 +272,7 @@ set_update(set_t *l, setkey_t k, setval_t v)
     
     /* Insert at each of the other levels in turn. */
     i = 1;
+    old_cnt = __sync_fetch_and_add(&cnt_ins, 1);
     while ( i < level )
     {
         pred = preds[i];
@@ -378,17 +315,15 @@ success:
 //    old_time = __sync_fetch_and_add(&ins_tot_time, read_tsc_p() - start);
 //    old_cnt = __sync_fetch_and_add(&cnt_ins, 1);
 
-//    if (!(old_cnt % 1000000)) {
-//	printf("ins: %"PRIu64"\n", old_time/old_cnt);
-//    }
-
-
+    if (!(old_cnt % 5000000)) {
+	printf("ins: %d\n", old_cnt);
+    }
     
-    critical_exit(ptst);
+    critical_exit();
 }
 
 // Local cache of node.
-__thread sh_node_pt pt, old_obs_hp;
+__thread node_t *pt, *old_obs_hp;
 __thread int old_offset;
 
 
@@ -409,44 +344,46 @@ __thread  int exp_step_cnt = 0;
 
 int tot_cnt = 1;
 
-#define MAXS 64
+#define MAXS 16
 
 uint64_t tot_time[MAXS*8] = {0};
 int cnt_rem[MAXS*8] = {1};
  
-#define NODEOPTIM
+//#define NODEOPTIM
+#define THREADOPTIM
+
 
 setkey_t
 set_removemin(set_t *l, int id)
 {
     setval_t   v = NULL;
     setkey_t   k = 0;
-    ptst_t    *ptst;
-    sh_node_pt preds[NUM_LEVELS];
-    sh_node_pt x, cur, x_next, obs_hp;
+    node_t *preds[NUM_LEVELS];
+    node_t *x, *cur, *x_next, *obs_hp;
     int offset = 0, lvl = 0;
     uint64_t start, end;
     uint64_t old_time;
     int old_cnt;
     int loop = 1; 
     int start_idx;
-
-    ptst = critical_enter();
+    
+    critical_enter();
     start = read_tsc_p();
-
+start:
 #ifdef THREADOPTIM
+    IRMB();
     if (old_obs_hp == l->head->next[0]) {
 	__sync_fetch_and_add(&cheap_step_cnt, 1);
 	x = pt;
     } else {
 	x = l->head;
 	old_offset = 0;
+	offset = 0;
 	old_obs_hp = x->next[0];
 	__sync_fetch_and_add(&exp_step_cnt, 1);
     }
 #endif //THREADOPTIM
 
-start:
 
 #ifdef NODEOPTIM
     IRMB();
@@ -461,25 +398,19 @@ start:
 	__sync_fetch_and_add(&exp_step_cnt, 1);
     }
 #endif //NODEOPTIM
+
     do {
 	offset++;
 	IRMB();
 	x_next = x->next[0]; // expensive
 
 	assert(x_next != END);
-	if (x_next == END) return NULL;
-
-	// will break down if no one makes progress on node
-	if (offset > l->max_offset && (obs_hp != l->head->next[0] || obs_hp != starts[id/8].obshp)) {
-	    offset = 0;
-	    goto start;
-	}
-	
+	if (x_next == END) return SETKEY_NULL;
 
 	if (is_marked_ref(x_next)) continue;
 	    /* the marker is on the preceding pointer */
             /* linearisation */
-	    x_next = FAO((sh_node_pt *)get_unmarked_ref(&x->next[0]), 1); 
+	    x_next = FAO((node_t **)get_unmarked_ref(&x->next[0]), 1); 
 //	    x_next = __sync_fetch_and_add((uint64_t *)&x->next[0], 1);
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
@@ -498,6 +429,9 @@ start:
 #ifdef THREADOPTIM
     pt = x;
     old_offset += offset;
+    offset = old_offset;
+    obs_hp = old_obs_hp;
+    
 #endif
 
     // distribute locally
@@ -529,7 +463,7 @@ start:
 
 	// update upper levels
 	for (int i = lvl; i > 0; i--) {
-	    sh_node_pt next = l->head->next[i];
+	    node_t *next = l->head->next[i];
 	    while (next != CASPO(&l->head->next[i], next, preds[i]->next[i]))
 	    { 
 		// we have a new beginning of the list.
@@ -555,7 +489,7 @@ out:
 	printf("%d\n", tot_cnt);
     }
     
-    critical_exit(ptst);
+    critical_exit();
     return k;
 }
 
@@ -579,7 +513,7 @@ num_digits (unsigned int i)
 
 unsigned int
 highest_level(set_t *l) {
-    sh_node_pt x, x_next;
+    node_t *x, *x_next;
     x = l->head;
     for ( int i = l->max_level - 1; i >= 1; i-- )
     {
@@ -597,7 +531,7 @@ pprint (set_t *q)
     char *keyfrm = "%1.1f ";
     char *keyfrm1 = "-> %1.1f ";
     //char *keyfrm = "%3d ";
-    sh_node_pt n, bottom;
+    node_t *n, *bottom;
     char *seps[] = {"-------", "----", "---", "--"};
     unsigned int lvl = highest_level(q);
 
@@ -648,11 +582,10 @@ pprint (set_t *q)
 void
 seq_test ()
 {
-    _init_ptst_subsystem();
     _init_gc_subsystem();
     _init_set_subsystem();
 
-    set_t *q = set_alloc(5, 6);
+    set_t *q = set_alloc(5, 6, 1);
 
     set_update(q, (double)5.1, (void *)5);
     set_update(q, (double)7, (void *)7);
