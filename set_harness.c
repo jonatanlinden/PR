@@ -227,7 +227,7 @@ static void *thread_start(void *arg)
     /* Start search structure off with a well-distributed set of inital keys */
 
     if (id == 0) {
-	for (i = 1; i < max_key; i++) {
+	for (i = 1; i <= max_key; i++) {
 	    set_update(shared.set,(double) i, v);
 	}
     }
@@ -258,9 +258,8 @@ static void *thread_start(void *arg)
     ov = NULL;
     ok = 0;
 
-    uint64_t now;
     uint64_t lap = read_tsc_p() + 2700000000;
-    uint64_t sleeptime  = 0;
+    uint64_t local_sum  = 0;
 
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
     {
@@ -274,25 +273,31 @@ static void *thread_start(void *arg)
 	// always increase.
 	k = set_removemin(shared.set, id);
 	
+	local_sum+=k;
+
 	//if (k > 1) { // success
 	del_cnt++;
 	ok = k;
 //	}
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
 	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
-	k = ok + max_key;//1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
-
+	//k = ok + max_key;//1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
+//	if (del_cnt > 9999) break;
+	
 	
 	set_update(shared.set, k, v);
-	now = read_tsc_p();
-	//sleep
-	while(read_tsc_p() - now < local)
-	    ;
-
-	sleeptime += read_tsc_p() - now;
-
-
+	
+	// local work...
+	volatile int k = 0;
+	for (int j = 0; j < local; j++) {
+	    k = j;
+	    __asm__("");
+	}
     }
+
+    // checksum calculation
+    //printf("local_sum: %llu\n", local_sum);
 
     /* BARRIER FOR ALL THREADS */
     {
@@ -313,8 +318,6 @@ static void *thread_start(void *arg)
 
     delete_successes[id] = del_cnt;
     update_successes[id] = upd_cnt;
-    
-    __sync_fetch_and_add(&global_sleeptime, sleeptime);
     
 
     return(NULL);

@@ -53,7 +53,6 @@ do {                                                                    \
 /*
  * POINTER MARKING
  */
-
 //#define USE_FAA
 
 #ifdef USE_FAA

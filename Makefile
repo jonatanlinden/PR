@@ -5,11 +5,11 @@ CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
 #CFLAGS      += $(DEBUGGING)
-CFLAGS       += -DNDEBUG
+#CFLAGS       += -DNDEBUG
 
 COMMON_DEPS += Makefile $(wildcard *.h)
 
-GC_HARNESS_TARGETS := skip_cas prioq
+GC_HARNESS_TARGETS := skip_cas prioq naive
 
 TARGETS    := $(GC_HARNESS_TARGETS)
 

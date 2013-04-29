@@ -59,6 +59,13 @@
 	_y % _k;\
     })
 
+
+#define min(a,b) \
+    ({ __typeof__ (a) _a = (a);	 \
+	__typeof__ (b) _b = (b); \
+	_a < _b ? _a : _b;	 \
+    })
+
 #if defined(__x86_64__)
 /* accurate time measurements on late intel cpus */
 static inline uint64_t __attribute__((always_inline))

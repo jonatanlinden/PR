@@ -50,6 +50,8 @@
  * SKIP LIST
  */
 
+#define KEYOFFSET 7
+
 typedef struct node_st node_t;
 typedef struct set_st set_t;
 typedef VOLATILE node_t *sh_node_pt;
@@ -175,10 +177,8 @@ static sh_node_pt weak_search_predecessors(
             READ_FIELD(x_next, x->next[i]);
             x_next = get_unmarked_ref(x_next);
 	    
-	    if (x_next->next[0] == x)
-	    {
-		x_next_k = 0;
-	    }
+	    assert(x_next->next[0] != x);
+
 
             READ_FIELD(x_next_k, x_next->k);
             if ( x_next_k >= k ) break;
@@ -273,36 +273,14 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
     int        i, level;
     static int samekey_cnt = 0;
     
-    //k = CALLER_TO_INTERNAL_KEY(k);
+    k = k << KEYOFFSET; // fit duplicates.
+    
 
     critical_enter();
 
     succ = weak_search_predecessors(l, k, preds, succs);
     
  retry:
-    ov = NULL;
-
-    if ( succ->k == k )
-    {
-        /* Already a @k node in the list: update its key. */
-
-        new_ov = succ->v;
-        do {
-            if ( (ov = new_ov) == NULL )
-            {
-  
-                READ_FIELD(level, succ->level);
-                mark_deleted(succ, level & LEVEL_MASK);
-                succ = strong_search_predecessors(l, k, preds, succs);
-                goto retry;
-            }
-        }// always overwrite
-        while ( 1 && ((new_ov = CASPO(&succ->v, ov, v)) != ov) );
-
-        if ( new != NULL ) free_node(new);
-        goto out;
-
-    }
 
     /* Not in the list, so initialise a new node for insertion. */
     if ( new == NULL )
@@ -311,6 +289,42 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
         new->k = k;
         new->v = v;
     }
+
+    if ( succ->k == k )
+    {
+	k++;
+	new->k = k;
+	assert(k % (1<<KEYOFFSET) != 0);
+	//succ = weak_search_predecessors(l, k, preds, succs);
+	i = 0;
+	while (i < (succ->level & LEVEL_MASK)) {
+
+	    preds[i] = succ;
+	    RMB();
+	    
+	    succs[i] = get_unmarked_ref(succ->next[i]);
+	    i++;
+	    }
+	if (succs[0]->k == k) {
+	    succ = succs[0];
+	    goto retry;
+	    }
+	while (i < new->level) {
+	    RMB();
+	    pred = get_unmarked_ref(preds[i]);
+	    succs[i] = get_unmarked_ref(pred->next[i]);
+	    if (succs[i]->k <= k) {
+		succ = weak_search_predecessors(l, k, preds, succs);
+		goto retry;
+	    }
+	    i++;
+	}
+
+	succ = succs[0];
+	goto retry;
+    }
+    
+
     level = new->level;
 
     /* If successors don't change, this saves us some CAS operations. */
@@ -349,7 +363,8 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
 
         /* Ensure we have unique key values at every level. */
         //if ( succ->k == k ) goto new_world_view;
-        assert((pred->k <= k) && (succ->k >= k));
+	 assert((pred->k <= k) && (succ->k >= k));
+
 
         /* Replumb predecessor's forward pointer. */
         old_next = CASPO(&pred->next[i], succ, new);
@@ -467,7 +482,7 @@ setkey_t set_removemin(set_t *l)
 
 out:
     critical_exit();
-    return x_k;
+    return x_k >> KEYOFFSET;
 }
 
 

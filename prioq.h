@@ -24,8 +24,8 @@ typedef void         *setval_t;
 
 
 
-#define END (node_t *) 0xfefefefefefefefe
-//#define END (sh_node_pt) 0xc0c0c0c0c0c0c0c0
+//#define END (node_t *) 0xfefefefefefefefe
+#define END (node_t *) 0xc0c0c0c0c0c0c0c0
 
 
 
@@ -34,11 +34,7 @@ typedef struct node_s
     setkey_t  k;
     int       level;
     char pad2[4]; /* just to make it clear */
-#define LEVEL_MASK     0x0ff
-#define READY_FOR_FREE 0x100
     setval_t  v;
-    char pad0[40]; // above should be one cache line
-// NEW CACHE LINE
     struct node_s *next[1];
 } node_t;
 

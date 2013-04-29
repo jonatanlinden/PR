@@ -38,16 +38,15 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 #include <assert.h>
 #include <math.h>
-#include <stdint.h>
 #include <inttypes.h>
+#include <gsl/gsl_randist.h>
 #include "portable_defns.h"
 #include "prioq.h"
 #include "ptst.h"
 #include "j_util.h"
-#include <gsl/gsl_randist.h>
+
 
 __thread ptst_t *ptst;
 static int gc_id[NUM_LEVELS];
@@ -58,8 +57,6 @@ static int gc_id[NUM_LEVELS];
  * NB. Initialisation will eventually be pushed into garbage collector,
  * because of dependent read reordering.
  */
-
-//unsigned int align_cnt;
 static node_t *
 alloc_node()
 {
@@ -73,16 +70,14 @@ alloc_node()
 
 
 /* Free a node to the garbage collector. */
-static void 
+static inline void 
 free_node(node_t *n)
 {
-    gc_free(ptst, (void *)n, gc_id[(n->level & LEVEL_MASK) - 1]);
+    gc_free(ptst, (void *)n, gc_id[(n->level) - 1]);
 }
 
-
-
 static int
-weak_search_end(set_t *l, node_t **pa, int toplvl)
+search_end(set_t *l, node_t **pa, int toplvl)
 {
     node_t *x, *x_next;
     setkey_t  x_next_k;
@@ -120,8 +115,7 @@ weak_search_end(set_t *l, node_t **pa, int toplvl)
  */
 /* This function does not remove marked nodes. Use it optimistically. */
 static node_t *
-weak_search_predecessors(set_t *l, setkey_t k,
-			 node_t **pa, node_t **na, int bef)
+search_predecessors(set_t *l, setkey_t k, node_t **pa, node_t **na)
 {
     node_t *x, *x_next;
     setkey_t  x_next_k;
@@ -136,7 +130,7 @@ restart:
 
 	    assert (x_next != END);
             x_next_k = x_next->k;
-            if ( x_next_k > k || (bef && x_next_k == k)) break;
+            if ( x_next_k > k) break;
 
             x = x_next;
 	}
@@ -170,7 +164,6 @@ set_alloc(int max_offset, int max_level, int nthreads)
     assert(((unsigned long)t & 0x3FLU) == 0);
     assert(((unsigned long)h & 0x3FLU) == 0);
 
-
     t->k = SENTINEL_KEYMAX;
     h->k = SENTINEL_KEYMIN;
     h->level = NUM_LEVELS;
@@ -179,7 +172,6 @@ set_alloc(int max_offset, int max_level, int nthreads)
         h->next[i] = t;
     }    
 
-    printf("sentinel max: %lu\n", t->k);
     /*
      * Note use of 0xfe -- that doesn't look like a marked value!
      */
@@ -195,14 +187,11 @@ set_alloc(int max_offset, int max_level, int nthreads)
     l->max_level  = max_level;
     l->nthreads = nthreads;
     
-    assert((sizeof(int)+sizeof(setval_t) + sizeof(setkey_t) + 44) == CACHE_LINE_SIZE);
     printf("nodesize: %d\n", (int) sizeof(node_t));
 
     return l;
 }
 
-uint64_t ins_tot_time = 0;
-int cnt_ins = 1;
 
 void 
 set_update(set_t *l, setkey_t k, setval_t v)
@@ -211,9 +200,6 @@ set_update(set_t *l, setkey_t k, setval_t v)
     node_t *pred, *succ, *new = NULL, *new_next, *old_next;
     int        i, level;
     node_t *x, *x_next;
-    uint64_t start;
-    uint64_t old_time;
-    int old_cnt;
 
     critical_enter();
     
@@ -226,11 +212,9 @@ set_update(set_t *l, setkey_t k, setval_t v)
         new->v = v;
     }
 
-    start = read_tsc_p(); // alloc is unavoidable, meas time from here
-
     level = new->level;
 
-    weak_search_predecessors(l, k, preds, succs, 0);
+    search_predecessors(l, k, preds, succs);
     succ = succs[0];
     
     /* If successors don't change, this saves us some CAS operations. */
@@ -247,7 +231,8 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded */
 	if (is_marked_ref(preds[0]->next[0])) {
-	    /* we don't aim at being inserted but at the lowest level */
+	    /* Close to head: we don't aim at being inserted but at
+	     * the lowest level */
 	    new->level = 1;
 	    x = get_unmarked_ref(preds[0]->next[0]);
 	    do {
@@ -263,24 +248,21 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	    } while(1);
 	} else {
 	    /* competing insert. */
-	    weak_search_predecessors(l, k, preds, succs, 0);
+	    search_predecessors(l, k, preds, succs);
 	    succ = succs[0];
 	    goto retry;
 	}
     }
-    
-    
     /* Insert at each of the other levels in turn. */
     i = 1;
-    old_cnt = __sync_fetch_and_add(&cnt_ins, 1);
     while ( i < level )
     {
         pred = preds[i];
         succ = succs[i];
 
         /* Someone *can* delete @new under our feet! */
-
         if ( new->k != k) goto success;
+	//if (is_marked_ref(new->next[0])) goto success;
 
         /* Ensure forward pointer of new node is up to date. */
 	new_next = new->next[i];
@@ -300,7 +282,7 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	    RMB(); /* get up-to-date view of the world. */
 	    if (is_marked_ref(new->next[0]) || new->k != k) goto success;
 	    
-            weak_search_predecessors(l, k, preds, succs, 0);
+            search_predecessors(l, k, preds, succs);
 	    succ = succs[0];
 	    if (succ != new) goto success;
 	    
@@ -311,8 +293,6 @@ set_update(set_t *l, setkey_t k, setval_t v)
         i++;
     }
 success:
-
-    
     critical_exit();
 }
 
@@ -330,11 +310,12 @@ set_removemin(set_t *l, int id)
     setkey_t   k = 0;
     node_t *preds[NUM_LEVELS];
     node_t *x, *cur, *x_next, *obs_hp;
-    int offset = 0, lvl = 0;
+    int offset, lvl;
     
     critical_enter();
 
 start:
+    offset = lvl = 0;
 #ifdef THREADOPTIM
     IRMB();
     if (old_obs_hp == l->head->next[0]) {
@@ -349,6 +330,7 @@ start:
 
     do {
 	offset++;
+
 	IRMB();
 	x_next = x->next[0]; // expensive
 
@@ -359,7 +341,7 @@ start:
 	    /* the marker is on the preceding pointer */
             /* linearisation */
 	    x_next = FAO((node_t **)get_unmarked_ref(&x->next[0]), 1); 
-//	    x_next = __sync_fetch_and_add((uint64_t *)&x->next[0], 1);
+	    //x_next = __sync_fetch_and_add((uint64_t *)&x->next[0], 1);
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
 
@@ -371,7 +353,6 @@ start:
     old_offset += offset;
     offset = old_offset;
     obs_hp = old_obs_hp;
-    
 #endif
 
     /* save value */
@@ -381,19 +362,17 @@ start:
     /* if the offset is big enough, try to clean up 
      * we swing the hp to the new auxiliary node x (which is deleted) 
      */
-    //obs_hp = old_obs_hp;
-    if (offset <= l->max_offset || l->head->next[0] != obs_hp) goto out;
+    if (offset <= l->max_offset || l->head->next[0] != obs_hp || (offset-l->nthreads) > l->max_offset) goto out;
 
-    x = get_marked_ref(x);
     /* fails if someone else already has updated the head node */
-    if (obs_hp == CASPO(&l->head->next[0], obs_hp, x))
+    if (obs_hp == CASPO(&l->head->next[0], obs_hp, get_marked_ref(x)))
     {
 	
-	assert(offset > l->max_offset);
+	assert(offset > l->max_offset && (offset - l->nthreads) <= l->max_offset);
 	/* Here we own every node between old hp and x.	 */
 	/* retrieve the last deleted node for each level. */
 	/* will not change. */
-	lvl = weak_search_end(l, preds, -1);
+	lvl = search_end(l, preds, -1);
 
 	// update upper levels
 	for (int i = lvl; i > 0; i--) {
@@ -401,7 +380,7 @@ start:
 	    while (next != CASPO(&l->head->next[i], next, preds[i]->next[i]))
 	    { 
 		// we have a new beginning of the list.
-		weak_search_end(l, preds, i);
+		search_end(l, preds, i);
 		next = l->head->next[i];
 	    }
 	}
@@ -414,22 +393,8 @@ start:
 	}
     }
 out:
-
-    
     critical_exit();
     return k;
-}
-
-setval_t
-set_remove(set_t *l, setkey_t key)
-{
-    node_t *node;
-    
-    node = weak_search_predecessors(l, key, NULL, NULL, 1);
-    node = FAO(&node->next[0], 1);
-    if (is_marked_ref(node)) return NULL;
-    
-    return node;
 }
 
 unsigned int
@@ -499,7 +464,7 @@ pprint (set_t *q)
     printf("top: ");
     n = q->head;
     while (n != END) {
-	printf(" t%2d,d%d", (int) n->level & LEVEL_MASK, is_marked_ref(n->next[0]));
+	printf(" t%2d,d%d", (int) n->level, is_marked_ref(n->next[0]));
 	n = get_unmarked_ref(n->next[0]);
     }
     printf("\n\n");
@@ -522,8 +487,7 @@ seq_test ()
     set_removemin(q, 0);
     set_update(q, 10, (void *)10);
     set_update(q, 9, (void *)9);
-    
-    set_remove(q, 10);
+
     set_update(q, 4, (void *)4);
     set_removemin(q,0);
     set_removemin(q,0);
