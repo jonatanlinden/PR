@@ -50,7 +50,7 @@
  * SKIP LIST
  */
 
-#define KEYOFFSET 7
+#define KEYOFFSET 6
 
 typedef struct node_st node_t;
 typedef struct set_st set_t;
@@ -271,10 +271,9 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
     sh_node_pt preds[NUM_LEVELS], succs[NUM_LEVELS];
     sh_node_pt pred, succ, new = NULL, new_next, old_next;
     int        i, level;
-    static int samekey_cnt = 0;
+    static int cnt = 0;
     
     k = k << KEYOFFSET; // fit duplicates.
-    
 
     critical_enter();
 
@@ -292,10 +291,12 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
 
     if ( succ->k == k )
     {
+	
 	k++;
 	new->k = k;
+	/* Will fail if same key is inserted 2^KEYOFFSET times */
 	assert(k % (1<<KEYOFFSET) != 0);
-	//succ = weak_search_predecessors(l, k, preds, succs);
+	
 	i = 0;
 	while (i < (succ->level & LEVEL_MASK)) {
 
@@ -314,6 +315,7 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
 	    pred = get_unmarked_ref(preds[i]);
 	    succs[i] = get_unmarked_ref(pred->next[i]);
 	    if (succs[i]->k <= k) {
+		cnt++;
 		succ = weak_search_predecessors(l, k, preds, succs);
 		goto retry;
 	    }
@@ -391,6 +393,10 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
  out:
     
     critical_exit();
+    if (!(cnt % 10000)) {
+	printf("cnt: %d\n", cnt);
+	cnt++;
+    }
 
     return(ov);
 }

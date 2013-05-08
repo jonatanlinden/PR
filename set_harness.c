@@ -207,7 +207,7 @@ static void *thread_start(void *arg)
 
     v = (void *)8888888888;
 
-#define PIN
+//#define PIN
 #ifdef PIN
     //pin (gettid(), 4*(unsigned long)arg);
     // straight allocation
@@ -258,7 +258,6 @@ static void *thread_start(void *arg)
     ov = NULL;
     ok = 0;
 
-    uint64_t lap = read_tsc_p() + 2700000000;
     uint64_t local_sum  = 0;
 
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
