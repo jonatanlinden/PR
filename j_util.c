@@ -45,7 +45,7 @@ getcoreid()
 }
 
 /* works on linux systems */
-uint64_t 
+/* uint64_t 
 nsec_now (void) 
 {
         struct timespec ts;
@@ -54,4 +54,4 @@ nsec_now (void)
                 (uint64_t) ts.tv_sec * 1000000000ULL +
                 (uint64_t) ts.tv_nsec;
 }
-
+*/
