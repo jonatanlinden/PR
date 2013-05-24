@@ -269,7 +269,6 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	if ( new_next != succ )
         {
             old_next = CASPO(&new->next[i], new_next, succ);
-            if ( is_marked_ref(old_next) ) goto success;
             assert(old_next == new_next);
         }
 
