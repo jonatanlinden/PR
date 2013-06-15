@@ -33,7 +33,8 @@ typedef struct node_s
 {
     setkey_t  k;
     int       level;
-    char pad2[4]; /* just to make it clear */
+    int       inserting;
+    int       alloc_level;//char pad2[4];
     setval_t  v;
     struct node_s *next[1];
 } node_t;
@@ -43,8 +44,11 @@ typedef struct set_s
     int max_offset;
     int max_level;
     int nthreads;
-    
     node_t *head;
+    node_t *tail;
+    char pad[64];
+    
+    unsigned int randomSeed;
 } set_t;
 
 

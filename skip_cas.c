@@ -50,7 +50,7 @@
  * SKIP LIST
  */
 
-#define KEYOFFSET 6
+#define KEYOFFSET 7
 
 typedef struct node_st node_t;
 typedef struct set_st set_t;
@@ -245,7 +245,7 @@ set_t *set_alloc(int max_offset, int max_level)
     n = malloc(sizeof(*n) + (NUM_LEVELS-1)*sizeof(node_t *));
     memset(n, 0, sizeof(*n) + (NUM_LEVELS-1)*sizeof(node_t *));
     n->k = SENTINEL_KEYMAX;
-
+    printf("max : %llu\n", SENTINEL_KEYMAX);
     /*
      * Set the forward pointers of final node to other than NULL,
      * otherwise READ_FIELD() will continually execute costly barriers.
@@ -291,11 +291,10 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
 
     if ( succ->k == k )
     {
-	
 	k++;
 	new->k = k;
 	/* Will fail if same key is inserted 2^KEYOFFSET times */
-	assert(k % (1<<KEYOFFSET) != 0);
+	assert((k % (1<<KEYOFFSET)) != 0);
 	
 	i = 0;
 	while (i < (succ->level & LEVEL_MASK)) {

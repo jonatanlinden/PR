@@ -116,7 +116,7 @@ static void log_float (char *name, float val) {
 static void dump_log (void) {
     int i;
 
-    fprintf (stdout, "-------------------------------------------"
+/*    fprintf (stdout, "-------------------------------------------"
              "---------------------------\n");
 
     for (i = 0; i < num_log_records; i ++)
@@ -136,7 +136,7 @@ static void dump_log (void) {
     }
     fprintf (stdout, "-------------------------------------------"
              "---------------------------\n");
-
+*/
     for (i = 0; i < num_log_records; i ++)
     {
         int kind = log_records [i].kind;
@@ -207,13 +207,13 @@ static void *thread_start(void *arg)
 
     v = (void *)8888888888;
 
-//#define PIN
+#define PIN
 #ifdef PIN
     //pin (gettid(), 4*(unsigned long)arg);
     // straight allocation
     pin (gettid(), id/8 + 4*(id % 8));
 #endif
-
+    
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
     
@@ -272,7 +272,7 @@ static void *thread_start(void *arg)
 	// always increase.
 	k = set_removemin(shared.set, id);
 	
-	local_sum+=k;
+	//local_sum+=k;
 
 	//if (k > 1) { // success
 	del_cnt++;
@@ -280,6 +280,8 @@ static void *thread_start(void *arg)
 //	}
         //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
 	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
+	//k = gsl_rng_uniform_int(rng[id], (2<<29)-2);
+	
 	//k = ok + max_key;//1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
 	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
 //	if (del_cnt > 9999) break;
