@@ -187,6 +187,34 @@ static struct {
     CACHE_PAD(2);
 } shared;
 
+void
+gen_lfsr(unsigned long*arr, int len)
+{
+    unsigned long lfsr = 1;
+    unsigned period = 0;
+    do
+    {
+        /*taps: 32 31 29 1; feedback polynomial: x^32 + x^31 + x^29 + x + 1*/
+        lfsr = (lfsr >> 1) ^ (-(lfsr & 1u) & 0xD0000001u); 
+	arr[period] = (unsigned long) lfsr;
+        ++period;
+    } while(lfsr != 1u && period < len);
+
+}
+
+void
+gen_exps(unsigned long *arr, int len, int intens)
+{
+    int i = 0;
+    arr[0] = 2;
+    while (i + 1 < len) {
+       arr[i+1] = arr[i] + 1 + (unsigned long)ceil(gsl_ran_exponential (rng[0], intens));
+       i++;
+    }
+}
+static unsigned long *exps;
+static int exps_pos = 0;
+
 static void alarm_handler( int arg)
 {
     shared.alarm_time = 1;
@@ -197,7 +225,7 @@ static void *thread_start(void *arg)
 {
     //unsigned long k, ok;
     setkey_t k, ok;
-    int i;
+    int i, j;
     void *ov, *v;
     long id = (long)arg;
 
@@ -217,19 +245,26 @@ static void *thread_start(void *arg)
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
     
+#define EXPS 90000000
     if ( id == 0 )
     {
         _init_gc_subsystem();
         _init_set_subsystem();
         shared.set = set_alloc(max_offset, 20, num_threads);
-    }
+	exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS);
+	gen_exps(exps, EXPS, 1000);
+	//gen_lfsr(exps, EXPS);
+	
 
-    /* Start search structure off with a well-distributed set of inital keys */
+	for (i = 0; i < max_key; i++) {
+	    set_update(shared.set, exps[exps_pos], v);
+	    exps_pos++;
+	    }
 
-    if (id == 0) {
-	for (i = 1; i <= max_key; i++) {
-	    set_update(shared.set,(double) i, v);
-	}
+	/*for (i = 1; i <= max_key; i++) {
+	    set_update(shared.set, i, v);
+	    }*/
+	//sequential_length(shared.set);
     }
 
     {
@@ -257,9 +292,9 @@ static void *thread_start(void *arg)
     int upd_cnt = 0;
     ov = NULL;
     ok = 0;
-
     uint64_t local_sum  = 0;
-
+    int kcnts = 0;
+    
     for ( i = 0; (i < MAX_ITERATIONS) && !shared.alarm_time; i++ )
     {
 
@@ -268,31 +303,27 @@ static void *thread_start(void *arg)
 	 */
 
 	v = (void *)99999999999;
-	
-	// always increase.
-	k = set_removemin(shared.set, id);
-	
-	//local_sum+=k;
 
-	//if (k > 1) { // success
-	del_cnt++;
+	// always increase.
+	k = set_removemin(shared.set);
+	
+	assert(k != ok);
+	
+	local_sum+=k;
 	ok = k;
-//	}
-        //k = ok + 1 + gsl_ran_geometric (rng[id], intens);
-	//k = ok + 100 + gsl_rng_uniform_int (rng[id], intens);
-	//k = gsl_rng_uniform_int(rng[id], (2<<29)-2);
 	
-	//k = ok + max_key;//1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
-	k = ok + 1 + (long)ceil(gsl_ran_exponential (rng[id], intens));
-//	if (del_cnt > 9999) break;
+	del_cnt++;
+
+	//k = k + max_key;
+
+	j = __sync_fetch_and_add(&exps_pos, 1);
 	
-	
-	set_update(shared.set, k, v);
+	set_update(shared.set, exps[j], v);
 	
 	// local work...
-	volatile int k = 0;
-	for (int j = 0; j < local; j++) {
-	    k = j;
+	volatile int kk = 0;
+	for (j = 0; j < local; j++) {
+	    kk = j;
 	    __asm__("");
 	}
     }
@@ -307,6 +338,9 @@ static void *thread_start(void *arg)
             id = n_id;
     }
     while ( threads_initialised3 != num_threads ) MB();
+    
+    //printf("kcnts: %d\n", kcnts);
+    
 
 
     if ( id == num_threads - 1 )
@@ -314,6 +348,7 @@ static void *thread_start(void *arg)
         gettimeofday(&done_time, NULL);
         times(&done_tms);
         WMB();
+	//sequential_length(shared.set);
         _destroy_gc_subsystem();
     } 
 

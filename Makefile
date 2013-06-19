@@ -1,10 +1,10 @@
-DEBUGGING := -g -O0
+DEBUGGING := -g 
 
 CC          := gcc -std=c99
 CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
-#CFLAGS      += $(DEBUGGING)
+CFLAGS      += $(DEBUGGING)
 #CFLAGS       += -DNDEBUG
 
 COMMON_DEPS += Makefile $(wildcard *.h)
@@ -33,5 +33,5 @@ microtest: prioq.o ptst.o gc.o
 
 tsigas: LDFLAGS += -L${HOME}/NobleDemo64/Lib/Linux64_x86 -lNOBLEDEMO64
 tsigas: CFLAGS += -I${HOME}/NobleDemo64/Include
-tsigas: tsigas.o set_harness.o
+tsigas: tsigas.o set_harness.o j_util.o
 	$(CC) -o $@ $^ $(LDFLAGS)

@@ -33,8 +33,7 @@ typedef struct node_s
 {
     setkey_t  k;
     int       level;
-    int       inserting;
-    int       alloc_level;//char pad2[4];
+    int       inserting; //char pad2[4];
     setval_t  v;
     struct node_s *next[1];
 } node_t;
@@ -64,5 +63,9 @@ extern void set_update(set_t *s, setkey_t k, setval_t v);
 
 extern setval_t set_remove(set_t *s, setkey_t k);
 
-extern setkey_t set_removemin(set_t *s, int id);
+extern setkey_t set_removemin(set_t *s);
+
+extern void sequential_length(set_t *s);
+
+
 

@@ -50,7 +50,7 @@
  * SKIP LIST
  */
 
-#define KEYOFFSET 7
+
 
 typedef struct node_st node_t;
 typedef struct set_st set_t;
@@ -245,7 +245,6 @@ set_t *set_alloc(int max_offset, int max_level)
     n = malloc(sizeof(*n) + (NUM_LEVELS-1)*sizeof(node_t *));
     memset(n, 0, sizeof(*n) + (NUM_LEVELS-1)*sizeof(node_t *));
     n->k = SENTINEL_KEYMAX;
-    printf("max : %llu\n", SENTINEL_KEYMAX);
     /*
      * Set the forward pointers of final node to other than NULL,
      * otherwise READ_FIELD() will continually execute costly barriers.
@@ -271,15 +270,14 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
     sh_node_pt preds[NUM_LEVELS], succs[NUM_LEVELS];
     sh_node_pt pred, succ, new = NULL, new_next, old_next;
     int        i, level;
-    static int cnt = 0;
-    
-    k = k << KEYOFFSET; // fit duplicates.
 
     critical_enter();
-
     succ = weak_search_predecessors(l, k, preds, succs);
     
  retry:
+    ov = NULL;
+
+    assert ( succ->k != k );
 
     /* Not in the list, so initialise a new node for insertion. */
     if ( new == NULL )
@@ -288,44 +286,6 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
         new->k = k;
         new->v = v;
     }
-
-    if ( succ->k == k )
-    {
-	k++;
-	new->k = k;
-	/* Will fail if same key is inserted 2^KEYOFFSET times */
-	assert((k % (1<<KEYOFFSET)) != 0);
-	
-	i = 0;
-	while (i < (succ->level & LEVEL_MASK)) {
-
-	    preds[i] = succ;
-	    RMB();
-	    
-	    succs[i] = get_unmarked_ref(succ->next[i]);
-	    i++;
-	    }
-	if (succs[0]->k == k) {
-	    succ = succs[0];
-	    goto retry;
-	    }
-	while (i < new->level) {
-	    RMB();
-	    pred = get_unmarked_ref(preds[i]);
-	    succs[i] = get_unmarked_ref(pred->next[i]);
-	    if (succs[i]->k <= k) {
-		cnt++;
-		succ = weak_search_predecessors(l, k, preds, succs);
-		goto retry;
-	    }
-	    i++;
-	}
-
-	succ = succs[0];
-	goto retry;
-    }
-    
-
     level = new->level;
 
     /* If successors don't change, this saves us some CAS operations. */
@@ -363,9 +323,11 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
         }
 
         /* Ensure we have unique key values at every level. */
-        //if ( succ->k == k ) goto new_world_view;
-	 assert((pred->k <= k) && (succ->k >= k));
-
+        if ( succ->k == k ) goto new_world_view;
+	if (pred->k >= k || succ->k <= k) {
+	    printf("(pred->k >= k || succ->k <= k, %lu %lu %lu\n", pred->k, k, succ->k);
+	}
+        //assert((pred->k < k) && (succ->k > k));
 
         /* Replumb predecessor's forward pointer. */
         old_next = CASPO(&pred->next[i], succ, new);
@@ -390,13 +352,7 @@ setval_t set_update(set_t *l, setkey_t k, setval_t v)
         do_full_delete(l, new, level - 1);
     }
  out:
-    
     critical_exit();
-    if (!(cnt % 10000)) {
-	printf("cnt: %d\n", cnt);
-	cnt++;
-    }
-
     return(ov);
 }
 
@@ -405,22 +361,24 @@ setval_t set_remove(set_t *l, setkey_t k)
 {
     setval_t  v = NULL, new_v;
     sh_node_pt preds[NUM_LEVELS], x;
-    int        level, i;
+    int        level, i = 0;
 
-    //k = CALLER_TO_INTERNAL_KEY(k);
+    
+    do {
+	x = weak_search_predecessors(l, k, preds, NULL);
+    } while (x->k != k);
 
-    x = weak_search_predecessors(l, k, preds, NULL);
-    if ( x->k > k ) goto out; //shouldn't happen
     READ_FIELD(level, x->level);
     level = level & LEVEL_MASK;
 
-     /* Committed to @x: mark lower-level forward pointers. */
+    /* Committed to @x: mark lower-level forward pointers. */
     WEAK_DEP_ORDER_WMB(); /* enforce above as linearisation point */
     mark_deleted(x, level);
 
     /*
      * We must swing predecessors' pointers, or we can end up with
      * an unbounded number of marked but not fully deleted nodes.
+
      * Doing this creates a bound equal to number of threads in the system.
      * Furthermore, we can't legitimately call 'free_node' until all shared
      * references are gone.
@@ -444,7 +402,6 @@ out:
     return(v);
 }
 
-
 setkey_t set_removemin(set_t *l)
 {
     setkey_t  k = 0;
@@ -461,51 +418,35 @@ setkey_t set_removemin(set_t *l)
     while (1)
     {
 	x_next = x->next[0];
-	x_next = get_unmarked_ref(x_next);
+ 	x_next = get_unmarked_ref(x_next);
 	
 	// tail?
-	if ( x_next == NULL || x_next == 0xfefefefefefefefe) goto out;
+	if ( x_next == 0xfefefefefefefefe) goto out;
 
 	/* Once we've marked the value field, the node is effectively deleted. */
-	new_v = x_next->v;
-	do {
-	    v = new_v;
-	    if ( v == NULL ) break; // continue to next node
+	v = x_next->v;
+	if ( v != NULL ) {
+	    v = CASPO(&x_next->v, v, NULL);
 	}
-	while ( (new_v = CASPO(&x_next->v, v, NULL)) != v );
-
+	
 	x = x_next;
-	if (v != NULL) 
+	if (v != NULL)
 	{
 	    break;  //success
 	}
 
     }
-    x_k = x->k;    
+    assert(x->v == NULL);
+    x_k = x->k;
 
+   
     set_remove(l, x_k);
 
 out:
     critical_exit();
-    return x_k >> KEYOFFSET;
+    return x_k;// >> KEYOFFSET;
 }
 
-
-setval_t set_lookup(set_t *l, setkey_t k)
-{
-    setval_t  v = NULL;
-    sh_node_pt x;
-
-    //k = CALLER_TO_INTERNAL_KEY(k);
-
-    critical_enter();
-
-    x = weak_search_predecessors(l, k, NULL, NULL);
-    if ( x->k == k ) READ_FIELD(v, x->v);
-
-    critical_exit();
-    return(v);
-}
 
 
 void _init_set_subsystem(void)

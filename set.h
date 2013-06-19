@@ -92,10 +92,7 @@ setval_t set_update(set_t *s, setkey_t k, setval_t v);
  */
 setval_t set_remove(set_t *s, setkey_t k);
 
-/*
- * Look up mapping for key @k in set @s. Return value if found, else NULL.
- */
-setval_t set_lookup(set_t *s, setkey_t k);
+setval_t set_removemin(set_t *s);
 
 #endif /* __SET_IMPLEMENTATION__ */
 
