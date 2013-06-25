@@ -31,10 +31,10 @@ typedef void         *setval_t;
 
 typedef struct node_s
 {
-    setkey_t  k;
     int       level;
     int       inserting; //char pad2[4];
     setval_t  v;
+    setkey_t  k;
     struct node_s *next[1];
 } node_t;
 

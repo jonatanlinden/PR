@@ -126,7 +126,7 @@ static node_t *
 search_predecessors(set_t *l, setkey_t k, node_t **pa, node_t **na, int skip)
 {
     node_t *x, *x_next;
-    
+
 restart:
     x = l->head;
     for (int i = NUM_LEVELS - 1; i >= 0; i-- )
@@ -140,6 +140,10 @@ restart:
 	    //if ( x_next->k >= k) {
             if ( x_next->k > k || (skip && x_next->k == k)) {
 		if (is_marked_ref(x->next[0]) && x_next != l->tail) {
+		    if (i == 0 && x_next->k != KEY_MIN) {
+			    x_next->k = KEY_MIN;
+			    goto restart;
+		    }
 		    x = x_next;
 		    continue;
 		} else {
@@ -270,7 +274,16 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	if (is_marked_ref(new->next[0])) {
 	    goto success;
 	}
+
+
 	// new was live after preds recorded
+	if (succ->k == KEY_MIN) {
+            search_predecessors(l, k, preds, succs, 0);
+	    succ = succs[0];
+	    if (succ != new) goto success;
+            continue;
+        }
+
 
         /* Replumb predecessor's forward pointer. */
 	new->next[i] = succ;
@@ -341,10 +354,10 @@ start:
 	}
 
 	if (is_marked_ref(x_next)) continue;
-	    /* the marker is on the preceding pointer */
-            /* linearisation */
-	    x_next = FAO((node_t **)&x->next[0], 1); 
-	    //x_next = __sync_fetch_and_add((uint64_t *)&x->next[0], 1);
+	/* the marker is on the preceding pointer */
+	/* linearisation */
+	k = x_next->k;
+	x_next = FAO((node_t **)&x->next[0], 1);
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
 
@@ -360,8 +373,7 @@ start:
 
     /* save value */
     v = x->v;
-    k = x->k;
-    //x->k = KEY_MIN;
+    x->k = KEY_MIN; /* reset key */
     if (newhead == NULL)
 	newhead = x;
     /* if the offset is big enough, try to clean up 
@@ -542,5 +554,4 @@ void _init_set_subsystem(void)
 	
     }
 }
-
 

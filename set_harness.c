@@ -167,8 +167,9 @@ static int threads_initialised2 = 0, max_offset;
 static int threads_initialised3 = 0;
 int num_threads;
 
-static unsigned long arrival_intensity;
+
 static unsigned long local_comp;
+static int type;
 
 static struct timeval start_time, done_time;
 static struct tms start_tms, done_tms;
@@ -226,11 +227,10 @@ static void *thread_start(void *arg)
     //unsigned long k, ok;
     setkey_t k, ok;
     int i, j;
-    void *ov, *v;
+    void *v;
     long id = (long)arg;
 
     unsigned long r = ((unsigned long)arg)+3; /*RDTICK();*/
-    unsigned int intens = arrival_intensity;
     unsigned int local = local_comp;
 
     v = (void *)8888888888;
@@ -245,19 +245,21 @@ static void *thread_start(void *arg)
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
     
-#define EXPS 90000000
+#define EXPS 80000000
     if ( id == 0 )
     {
         _init_gc_subsystem();
         _init_set_subsystem();
         shared.set = set_alloc(max_offset, 20, num_threads);
 	exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS);
-	gen_exps(exps, EXPS, 1000);
-	//gen_lfsr(exps, EXPS);
-	
+	if (type == 0) {
+	    gen_exps(exps, EXPS, 1000);
+	} else {
+	    gen_lfsr(exps, EXPS);
+	}
 
 	for (i = 0; i < max_key; i++) {
-	    set_update(shared.set, exps[exps_pos], v);
+	    set_update(shared.set, exps[exps_pos],(void *) 0x32);
 	    exps_pos++;
 	    }
 
@@ -290,7 +292,6 @@ static void *thread_start(void *arg)
     }
     int del_cnt = 0;
     int upd_cnt = 0;
-    ov = NULL;
     ok = 0;
     uint64_t local_sum  = 0;
     int kcnts = 0;
@@ -307,10 +308,10 @@ static void *thread_start(void *arg)
 	// always increase.
 	k = set_removemin(shared.set);
 	
-	assert(k != ok);
+	assert(k != 0);
 	
-	local_sum+=k;
-	ok = k;
+	//local_sum+=k;
+	//ok = k;
 	
 	del_cnt++;
 
@@ -319,12 +320,11 @@ static void *thread_start(void *arg)
 	j = __sync_fetch_and_add(&exps_pos, 1);
 	
 	set_update(shared.set, exps[j], v);
-	
-	// local work...
-	volatile int kk = 0;
-	for (j = 0; j < local; j++) {
-	    kk = j;
-	    __asm__("");
+
+	if (local_comp) {
+	    unsigned long long stop = (unsigned long long) read_tsc_p() + local_comp;
+	    while (read_tsc_p() < stop)
+		;
 	}
     }
 
@@ -436,7 +436,7 @@ int main (int argc, char **argv)
 
     if ( argc != 6 )
     {
-        printf("%s <num_threads> <arrival_intens> <key power> <max_offset> <local_comp>\n"
+        printf("%s <num_threads> <{0:exp,1:uni}> <key power> <max_offset> <local_comp>\n"
                , argv[0]);
         exit(1);
     }
@@ -447,8 +447,8 @@ int main (int argc, char **argv)
     log_int ("num_threads", num_threads);
 
 
-    arrival_intensity = atoi(argv[2]);
-    log_int("arrival_intens", arrival_intensity);
+    type = atoi(argv[2]);
+    log_int("type", type);
     
     log_max_key = atoi(argv[3]);
     max_key = 1ULL << atoi(argv[3]);
