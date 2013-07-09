@@ -24,16 +24,16 @@ typedef void         *setval_t;
 
 
 
-//#define END (node_t *) 0xfefefefefefefefe
-#define END (node_t *) 0xc0c0c0c0c0c0c0c0
+#define END (node_t *) 0xfefefefefefefefe
+//#define END (node_t *) 0xc0c0c0c0c0c0c0c0
 
 
 
 typedef struct node_s
 {
     int       level;
-    int       inserting; //char pad2[4];
     setval_t  v;
+    int       inserting; //char pad2[4];
     setkey_t  k;
     struct node_s *next[1];
 } node_t;

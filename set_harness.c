@@ -67,7 +67,7 @@
 #define MAX_ITERATIONS 100000000
 #define MAX_WALL_TIME 10 /* seconds */
 
-gsl_rng *rng[64];
+gsl_rng *rng[32];
 
 
 /*
@@ -203,13 +203,16 @@ gen_lfsr(unsigned long*arr, int len)
 
 }
 
+int dists[] = {100, 300, 1000, 10000};
+
+
 void
 gen_exps(unsigned long *arr, int len, int intens)
 {
     int i = 0;
     arr[0] = 2;
     while (i + 1 < len) {
-       arr[i+1] = arr[i] + 1 + (unsigned long)ceil(gsl_ran_exponential (rng[0], intens));
+	arr[i+1] = arr[i] + (unsigned long)ceil(gsl_ran_exponential (rng[0], dists[gsl_rng_uniform_int(rng[0], 4)]));
        i++;
     }
 }
@@ -245,7 +248,7 @@ static void *thread_start(void *arg)
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
     
-#define EXPS 80000000
+#define EXPS 100000000
     if ( id == 0 )
     {
         _init_gc_subsystem();
@@ -305,21 +308,17 @@ static void *thread_start(void *arg)
 
 	v = (void *)99999999999;
 
-	// always increase.
-	k = set_removemin(shared.set);
-	
-	assert(k != 0);
-	
-	//local_sum+=k;
-	//ok = k;
-	
-	del_cnt++;
+	if (gsl_rng_uniform (rng[id]) < 0.5) {
+	    k = set_removemin(shared.set);
+	    assert(k != 0);
+	} else {
+	    j = __sync_fetch_and_add(&exps_pos, 1);
+	    set_update(shared.set, exps[j], v);
+	}
 
 	//k = k + max_key;
 
-	j = __sync_fetch_and_add(&exps_pos, 1);
-	
-	set_update(shared.set, exps[j], v);
+	del_cnt++;
 
 	if (local_comp) {
 	    unsigned long long stop = (unsigned long long) read_tsc_p() + local_comp;
@@ -340,6 +339,7 @@ static void *thread_start(void *arg)
     while ( threads_initialised3 != num_threads ) MB();
     
     //printf("kcnts: %d\n", kcnts);
+    //printf("ok/cnt: %d, %d, %.1f\n", ok, upd_cnt, (float)ok/upd_cnt);
     
 
 

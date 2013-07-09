@@ -114,6 +114,7 @@ search_end(set_t *l, node_t **pa, int toplvl)
     return lvl;
 }
 
+
 /*
  * Search for first N, with key >= @k at each level in @l.
  * RETURN VALUES:
@@ -122,10 +123,11 @@ search_end(set_t *l, node_t **pa, int toplvl)
  *  MAIN RETURN VALUE: same as @na[0].
  */
 /* This function does not remove marked nodes. Use it optimistically. */
-static node_t *
-search_predecessors(set_t *l, setkey_t k, node_t **pa, node_t **na, int skip)
+static int
+search_predecessors(set_t *l, setkey_t k, node_t **pa, node_t **na, int level)
 {
     node_t *x, *x_next;
+    int bad_flag = 0;
 
 restart:
     x = l->head;
@@ -135,30 +137,30 @@ restart:
         {
             x_next = x->next[i];
             x_next = get_unmarked_ref(x_next);
-	    
-	    /* Different strategies depending on allowing multiple keys */
-	    //if ( x_next->k >= k) {
-            if ( x_next->k > k || (skip && x_next->k == k)) {
-		if (is_marked_ref(x->next[0]) && x_next != l->tail) {
-		    if (i == 0 && x_next->k != KEY_MIN) {
-			    x_next->k = KEY_MIN;
-			    goto restart;
+
+            if (x_next->k >= k && !is_marked_ref(x_next->next[0]))  {
+
+		if (i == 0 && is_marked_ref(x->next[0])) {
+		    if(x_next == na[1]) {
+			bad_flag = 1;
 		    }
 		    x = x_next;
 		    continue;
-		} else {
-		    break;
+		}
+		
+		break;
+	    } else {
+		if (i < NUM_LEVELS - 1 && x_next == na[i+1]) {
+		    bad_flag = 1;
 		}
 	    }
-
-	    assert (x_next != l->tail);
-            x = x_next;
+	    x = x_next;
+	    
 	}
-
         if ( pa ) pa[i] = x;
         if ( na ) na[i] = x_next;
     }
-    return x;
+    return bad_flag;
 }
 
 
@@ -213,31 +215,19 @@ set_alloc(int max_offset, int max_level, int nthreads)
     return l;
 }
 
-__thread int cnt = 0;
+__thread int retries = 1;
 
 void 
 set_update(set_t *l, setkey_t k, setval_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
     node_t *pred, *succ, *new = NULL, *new_next, *old_next;
-    int        i, level;
+    int        i, level, bad;
     node_t *x, *x_next;
     
     critical_enter();
     
  retry:
-    search_predecessors(l, k, preds, succs, 1);
-    succ = succs[0];
-    pred = preds[0];
-
-    if (succ->k == k && !is_marked_ref(pred->next[0]) && pred->next[0] == succ) {
-	cnt++;
-	if(!(cnt%100000)){
-	    printf("clashes: %d\n", cnt);
-	    
-	}
-	goto success;
-    }
 
     /* Initialise a new node for insertion. */
     if ( new == NULL )
@@ -247,6 +237,15 @@ set_update(set_t *l, setkey_t k, setval_t v)
         new->v = v;
     }
     level = new->level;
+
+    bad = search_predecessors(l, k, preds, succs, level);
+    succ = succs[0];
+    pred = preds[0];
+
+    if (succ->k == k && !is_marked_ref(pred->next[0]) && pred->next[0] == succ) {
+	goto success;
+    }
+
 
     /* If successors don't change, this saves us some CAS operations. */
     for ( i = 0; i < level; i++ )
@@ -262,7 +261,16 @@ set_update(set_t *l, setkey_t k, setval_t v)
     {
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded */
+	retries++;
+//	if (!(retries % 100000)) {
+//	    printf("retries: %d\n", retries);
+	    
+//	}
 	goto retry;
+    }
+    
+    if (bad) {
+	goto success;
     }
     /* Insert at each of the other levels in turn. */
     i = 1;
@@ -275,16 +283,6 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	    goto success;
 	}
 
-
-	// new was live after preds recorded
-	if (succ->k == KEY_MIN) {
-            search_predecessors(l, k, preds, succs, 0);
-	    succ = succs[0];
-	    if (succ != new) goto success;
-            continue;
-        }
-
-
         /* Replumb predecessor's forward pointer. */
 	new->next[i] = succ;
         old_next = CASPO(&pred->next[i], succ, new);
@@ -293,7 +291,10 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	    RMB(); /* get up-to-date view of the world. */
 	    if (is_marked_ref(new->next[0])) goto success;
 	    /* competing insert */
-            search_predecessors(l, k, preds, succs, 0);
+            bad = search_predecessors(l, k, preds, succs, level);
+	    if (bad) {
+		goto success;
+	    }
 	    succ = succs[0];
 	    if (succ != new) goto success;
             continue;
@@ -303,8 +304,11 @@ set_update(set_t *l, setkey_t k, setval_t v)
         i++;
     }
 success:
-    if (new)
+    if (new) {
 	new->inserting = 0;
+	WMB();
+    }
+    
     critical_exit();
 }
 
@@ -313,7 +317,7 @@ __thread node_t *pt, *old_obs_hp;
 __thread int old_offset;
 
 
-#define THREADOPTIM
+//#define THREADOPTIM
 
 setkey_t
 set_removemin(set_t *l)
@@ -325,7 +329,10 @@ set_removemin(set_t *l)
     int offset, lvl;
     
     critical_enter();
-
+    
+    x = l->head;
+    obs_hp = x->next[0];
+    
 start:
     offset = lvl = 0;
 #ifdef THREADOPTIM
@@ -356,7 +363,7 @@ start:
 	if (is_marked_ref(x_next)) continue;
 	/* the marker is on the preceding pointer */
 	/* linearisation */
-	k = x_next->k;
+//	k = x_next->k;
 	x_next = FAO((node_t **)&x->next[0], 1);
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
@@ -373,7 +380,9 @@ start:
 
     /* save value */
     v = x->v;
-    x->k = KEY_MIN; /* reset key */
+    k = x->k;
+    
+    //x->k = KEY_MIN; /* reset key */
     if (newhead == NULL)
 	newhead = x;
     /* if the offset is big enough, try to clean up 
@@ -451,8 +460,6 @@ pprint (set_t *q)
 
 	n = q->head;
 	printf(keyfrm, n->k);
-
-	
 
 	n = get_unmarked_ref(q->head->next[i]);
 	bottom = get_unmarked_ref(q->head->next[0]);
@@ -554,4 +561,6 @@ void _init_set_subsystem(void)
 	
     }
 }
+
+
 
