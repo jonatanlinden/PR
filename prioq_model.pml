@@ -25,6 +25,9 @@
     if :: (d == 0 && a == o) -> a = n; cas_success = 1; \
     :: else fi
 
+#define GCASSERT(new, old) \
+    assert(nodes[new].recycled == 0 || nodes[old].recycled);
+
 #define NLEVELS 2 /* 2 level skiplist */
 #define THREADS 2 /* 2 threads */
 #define NODES 11  /* total memory */
@@ -111,16 +114,20 @@ inline alloc_node(new, k)
 }
 
 
-/*************** The actual algorithm *******************/
+/*******************************************************************
+ * BEGIN PRIORITY QUEUE ALGORITHM
+ *******************************************************************/
+
 
 inline LocatePreds(key) {
 
   d_step {
-    i = NLEVELS - 1;
+    i = NLEVELS;
     pred = q.head;
     obs_head = 0;
   }
   do :: /* while i >= 0 */
+	i--;
 	d_step { /* colocated together */
 	  cur = nodes[pred].next[i];
 	  d = nodes[pred].d;
@@ -142,7 +149,7 @@ inline LocatePreds(key) {
 	 preds[i] = pred;
 	 succs[i] = cur;
 	 IF(i == 0) -> break FI;
-	 i = 0;
+
        }
   od;
 }
@@ -163,10 +170,13 @@ inline Restructure() {
 
        atomic {
 	 CAS(nodes[q.head].next[i], pred, cur);
-	 assert(nodes[cur].recycled == 0); /* gc */
-	 /* descend if CAS was successful: */
+	 /* descend if CAS was successful, otherwise retry */
+	 IF (cas_success) ->
+	   GCASSERT(cur, q.head)
+	   i--
+	 FI;
+
        }
-       IF (cas_success) -> i-- FI;
   od;
 }
 
@@ -189,9 +199,9 @@ start:
     CASD(nodes[preds[0]].next[0], nodes[preds[0]].d, succs[0], new);
 
     if :: (cas_success) ->
-      seq_add(new, key);
-      assert(nodes[succs[0]].recycled == 0 || nodes[new].recycled == 1) /* gc */
-      :: else -> goto start; /* restart */
+	  seq_add(new, key);
+	  GCASSERT(succs[0], new);
+       :: else -> goto start; /* restart */
     fi;
   }
 
@@ -205,22 +215,23 @@ start:
 	IF (nodes[new].d) -> goto end_insert FI;
 	atomic { /*cas */
 	  CAS(nodes[preds[1]].next[1], succs[1], new);
-	  /* FIX only assert if successful */
-	  assert(nodes[succs[1]].recycled == 0 || nodes[new].recycled == 1); /* gc */
+	  IF (cas_success) ->
+	    GCASSERT(succs[1], new)
+	    i++
+	  FI;
 	}
-	if :: (cas_success) -> i++;
-	   :: else ->
-	      LocatePreds(key); /* update preds and succs */
-	      IF (obs_head) -> goto end_insert FI;
-	      nodes[new].next[1] = succs[1];
-	fi;
+	IF (!cas_success) -> 
+	  LocatePreds(key) /* update preds and succs */
+	  IF (obs_head) -> goto end_insert FI;
+	  nodes[new].next[1] = succs[1]
+	FI
   od;
 
   /* we're done */
   goto end_insert;
 
 end_insert:
-  nodes[new].inserting = 0;
+  nodes[new].inserting = 0
 }
 
 /* Delete smallest element in queue */
@@ -252,18 +263,21 @@ inline DeleteMin ()
 		seq_remove(key);
 		break;
 	     :: else ->
-		pred = nodes[pred].next[0]; /* this is returned atomically by cas */	     offset ++;
+		/* new pred is returned atomically by cas */
+		pred = nodes[pred].next[0];
+		offset ++;
 	  fi;
 	}
   od;
   IF (newhead == NODES) -> newhead = nodes[pred].next[0];
   FI;
   IF (offset >= BOUNDOFFSET) ->
-    atomic {  /* the delete bits are both already set */
+    atomic {  /* the delete bits are both already set, only update pointer */
       CAS(nodes[q.head].next[0],obs_head,newhead);
-      assert(nodes[newhead].recycled == 0); /* gc */
+      if :: (cas_success) -> GCASSERT(newhead, q.head)
+	 :: else          -> goto end_remove
+      fi;
     }
-    IF (!cas_success) -> goto end_remove FI;
     Restructure();
     do
       :: cur = nodes[obs_head].next[0];
@@ -278,6 +292,10 @@ inline DeleteMin ()
 end_remove:
 }
 
+
+/*******************************************************************
+ * END ALGORITHM
+ *******************************************************************/
 
 /* random key generator.  */
 inline pick_key(var) { 
