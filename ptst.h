@@ -23,9 +23,10 @@ struct ptst_st
     /* State management */
     ptst_t      *next;
     unsigned int count;
+    unsigned int seed;
     /* Utility structures */
     gc_t        *gc;
-    gsl_rng   *rng;
+
 };
 
  /*

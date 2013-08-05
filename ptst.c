@@ -40,7 +40,7 @@
 #include <string.h>
 #include "portable_defns.h"
 #include "ptst.h"
-#include "j_util.h"
+#include "common.h"
 
 ptst_t *ptst_list = NULL;
 extern __thread ptst_t *ptst;
@@ -58,16 +58,14 @@ critical_enter()
 	    
 	memset(ptst, 0, sizeof(ptst_t));
 	ptst->gc = gc_init();
-	ptst->rng = gsl_rng_alloc(gsl_rng_taus2);
 	ptst->count = 1;
 	ptst->id = __sync_fetch_and_add(&next_id, 1);
-
+	ptst->seed = read_tsc_p();
 	new_next = ptst_list;
 	do {
 	    ptst->next = next = new_next;
-	    WMB_NEAR_CAS();
 	} 
-	while ( (new_next = CASPO(&ptst_list, next, ptst)) != next );
+	while ( (new_next = __sync_val_compare_and_swap(&ptst_list, next, ptst)) != next );
     }
     
     gc_enter(ptst);

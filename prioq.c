@@ -3,8 +3,9 @@
  * 
  * Priority queue, allowing concurrent update by use of CAS primitives. 
  * 
- * Heavily relying on work by K A Fraser
+ * 
  * Copyright (c) 2001-2003, K A Fraser
+ * Adapted from Keir Frasers skip list.
  * Copyright (c) 2013-2016, Jonatan Linden
  *
  * All rights reserved.
@@ -42,35 +43,32 @@
 #include <math.h>
 #include <inttypes.h>
 #include <gsl/gsl_randist.h>
-#include "portable_defns.h"
+
+#include "common.h"
 #include "prioq.h"
 #include "ptst.h"
-#include "j_util.h"
+
 
 
 __thread ptst_t *ptst;
-__thread unsigned int randomSeed = 34243111;// = (unsigned int) read_tsc_p();
 
 static int gc_id[NUM_LEVELS];
 
-
 /*
  * Allocate a new node, and initialise its @level field.
+ * Courtesy to Doug Lea.
  */
 static node_t *
-alloc_node(set_t *q)
+alloc_node(pq_t *q)
 {
     node_t *n;
-    unsigned int x = randomSeed;
-    x ^= x << 13;
-    x^= x >> 17;
-    randomSeed = x ^= x << 5;
     int level = 1;
-    while (((x >>= 1) & 1) != 0) 
-	++level;
-    
-    //unsigned int l = gsl_ran_geometric(ptst->rng, 0.5);
-    level = (level < 20) ? level : 20;
+    int r = ptst->seed;
+    ptst->seed = r * 134775813 + 1;
+    if (r < 0) {
+	while ((r <<= 1) > 0)
+	    ++level;
+    }
     n = gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
@@ -85,52 +83,15 @@ free_node(node_t *n)
     gc_free(ptst, (void *)n, gc_id[(n->level) - 1]);
 }
 
+
 static int
-search_end(set_t *l, node_t **pa, int toplvl)
-{
-    node_t *x, *x_next;
-    setkey_t  x_next_k;
-    int lvl = 0;
-    int start_lvl = toplvl == -1 ? NUM_LEVELS - 1 : toplvl;
-    if (toplvl > 0) lvl = toplvl;
-    
-    x = l->head;
-    for (int i = start_lvl; i >= 1; i-- )
-    {
-        for ( ; ; )
-        {
-	    x_next = get_unmarked_ref(x->next[i]);
-	    if (!is_marked_ref(x_next->next[0])) break;
-
-	    /* first lvl that actually needs updating */
-	    if (!lvl) lvl = i;
-	    
-            x = x_next;
-	    assert(x != END);
-	}
-
-        pa[i] = x;
-    }
-    return lvl;
-}
-
-
-/*
- * Search for first N, with key >= @k at each level in @l.
- * RETURN VALUES:
- *  Array @pa: @pa[i] is non-deleted predecessor of N at level i
- *  Array @na: @na[i] is N itself, which should be pointed at by @pa[i]
- *  MAIN RETURN VALUE: same as @na[0].
- */
-/* This function does not remove marked nodes. Use it optimistically. */
-static int
-search_predecessors(set_t *l, setkey_t k, node_t **pa, node_t **na, int level)
+locate_preds(pq_t *pq, pkey_t k, node_t **pa, node_t **na, int level)
 {
     node_t *x, *x_next;
     int bad_flag = 0;
 
 restart:
-    x = l->head;
+    x = pq->head;
     for (int i = NUM_LEVELS - 1; i >= 0; i-- )
     {
         for ( ; ; )
@@ -168,61 +129,40 @@ restart:
  * PUBLIC FUNCTIONS
  */
 
-set_t *
-set_alloc(int max_offset, int max_level, int nthreads)
+pq_t *
+pq_init(int max_offset)
 {
-    set_t *l;
+    pq_t *pq;
     node_t *t, *h;
     int i;
 
-    t = malloc(63+sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    t = (node_t *) (((uintptr_t)t+63) & ~(size_t)0x3F);
-    memset(t, 0, sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    h = malloc(63+sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    h = (node_t *) (((uintptr_t)h+63) & ~(size_t)0x3F);
-    memset(h, 0, sizeof(*h) + (NUM_LEVELS-1)*sizeof(node_t *));
-
-    assert(((unsigned long)t & 0x3FLU) == 0);
-    assert(((unsigned long)h & 0x3FLU) == 0);
+    /* align head and tail nodes */
+    t = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
+    h = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
 
     t->k = SENTINEL_KEYMAX;
     h->k = SENTINEL_KEYMIN;
     h->level = NUM_LEVELS;
     for ( i = 0; i < NUM_LEVELS; i++ )
-    {
         h->next[i] = t;
-    }    
 
-    /*
-     * Note use of 0xfe -- that doesn't look like a marked value!
-     */
-#ifdef USE_FAA
-    memset(t->next, 0xc0, NUM_LEVELS*sizeof(node_t *));
-#else
-    memset(t->next, 0xfe, NUM_LEVELS*sizeof(node_t *));
-#endif
+    pq = malloc(sizeof *pq);
+    pq->head = h;
+    pq->tail = t;
+    pq->max_offset = max_offset;
 
-    l = malloc(sizeof(*l) + (NUM_LEVELS-1)*sizeof(node_t *));
-    l->randomSeed = (unsigned int) read_tsc_p();
-    l->head = h;
-    l->tail = t;
-    l->max_offset = max_offset;
-    l->max_level  = max_level;
-    l->nthreads = nthreads;
+    for (int i = 0; i < NUM_LEVELS; i++ )
+	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
 
-    printf("nodesize: %d\n", (int) sizeof(node_t));
-
-    return l;
+    return pq;
 }
 
-__thread int retries = 1;
-
 void 
-set_update(set_t *l, setkey_t k, setval_t v)
+insert(pq_t *l, pkey_t k, val_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
-    node_t *pred, *succ, *new = NULL, *new_next, *old_next;
-    int        i, level, bad;
+    node_t *pred, *succ, *new = NULL, *new_next;
+    int        i, level, skew;
     node_t *x, *x_next;
     
     critical_enter();
@@ -238,7 +178,7 @@ set_update(set_t *l, setkey_t k, setval_t v)
     }
     level = new->level;
 
-    bad = search_predecessors(l, k, preds, succs, level);
+    skew = locate_preds(l, k, preds, succs, level);
     succ = succs[0];
     pred = preds[0];
 
@@ -246,32 +186,17 @@ set_update(set_t *l, setkey_t k, setval_t v)
 	goto success;
     }
 
-
-    /* If successors don't change, this saves us some CAS operations. */
-    for ( i = 0; i < level; i++ )
-    {
-        new->next[i] = succs[i];
-    }
-
+    new->next[0] = succs[0];
+    
     /* We've committed when we've inserted at level 1. */
-    WMB_NEAR_CAS(); /* make sure node fully initialised before inserting */
-    old_next = CASPO(&preds[0]->next[0], succ, new);
-
-    if ( old_next != succ )
-    {
+    if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succ, new))
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded */
-	retries++;
-//	if (!(retries % 100000)) {
-//	    printf("retries: %d\n", retries);
-	    
-//	}
 	goto retry;
-    }
+
     
-    if (bad) {
-	goto success;
-    }
+    if (skew) goto success;
+
     /* Insert at each of the other levels in turn. */
     i = 1;
     while ( i < level )
@@ -279,20 +204,19 @@ set_update(set_t *l, setkey_t k, setval_t v)
         pred = preds[i];
         succ = succs[i];
 
+	/* if successor of new is deleted, we're done */
 	if (is_marked_ref(new->next[0])) {
 	    goto success;
 	}
-
-        /* Replumb predecessor's forward pointer. */
 	new->next[i] = succ;
-        old_next = CASPO(&pred->next[i], succ, new);
-        if ( old_next != succ )
+
+        if (!__sync_bool_compare_and_swap(&pred->next[i], succ, new))
         {
-	    RMB(); /* get up-to-date view of the world. */
+	    //RMB(); /* get up-to-date view of the world. */
 	    if (is_marked_ref(new->next[0])) goto success;
 	    /* competing insert */
-            bad = search_predecessors(l, k, preds, succs, level);
-	    if (bad) {
+            skew = locate_preds(l, k, preds, succs, level);
+	    if (skew) {
 		goto success;
 	    }
 	    succ = succs[0];
@@ -306,46 +230,58 @@ set_update(set_t *l, setkey_t k, setval_t v)
 success:
     if (new) {
 	new->inserting = 0;
-	WMB();
+	IWMB();
     }
     
     critical_exit();
 }
 
-// Local cache of node.
-__thread node_t *pt, *old_obs_hp;
-__thread int old_offset;
 
-
-//#define THREADOPTIM
-
-setkey_t
-set_removemin(set_t *l)
+inline void 
+restructure(pq_t *pq)
 {
-    setval_t   v = NULL;
-    setkey_t   k = 0;
+    node_t *cur, *h, *next;
+    int i = NUM_LEVELS - 1;
+    cur = pq->head;
+    // update upper levels
+    while (i > 0) {
+	h = pq->head->next[i];
+	if (h == pq->tail) {
+	    i--;
+	    continue;
+	}
+	while(1) 
+	{
+	    next = cur->next[i];
+	    
+	    if (!is_marked_ref(next->next[0]))
+		break;
+	    cur = next;
+	}
+//	while (cur->next[i] != pq->tail && is_marked_ref(cur->next[0])) {
+//	    cur = cur->next[i];
+//	}
+	if (__sync_bool_compare_and_swap(&pq->head->next[i],h, cur->next[i]))
+	    i--;
+    }
+}
+
+pkey_t
+deletemin(pq_t *pq)
+{
+    val_t   v = NULL;
+    pkey_t   k = 0;
     node_t *preds[NUM_LEVELS];
     node_t *x, *cur, *x_next, *obs_hp, *newhead, *x_next_ref;
     int offset, lvl;
     
     critical_enter();
     
-    x = l->head;
+    x = pq->head;
     obs_hp = x->next[0];
     
 start:
     offset = lvl = 0;
-#ifdef THREADOPTIM
-    IRMB();
-    if (old_obs_hp == l->head->next[0]) {
-	x = pt;
-    } else {
-	x = l->head;
-	old_offset = 0;
-	offset = 0;
-	old_obs_hp = x->next[0];
-    }
-#endif //THREADOPTIM
 
     do {
 	offset++;
@@ -353,7 +289,7 @@ start:
 	IRMB();
 	x_next = x->next[0]; // expensive
 
-	if (x_next == l->tail) return SETKEY_NULL; // tail cannot be deleted
+	if (x_next == pq->tail) return KEY_NULL; // tail cannot be deleted
 	
 	x_next_ref = get_unmarked_ref(x_next);
 	if (newhead == NULL && x_next_ref->inserting) {
@@ -363,55 +299,31 @@ start:
 	if (is_marked_ref(x_next)) continue;
 	/* the marker is on the preceding pointer */
 	/* linearisation */
-//	k = x_next->k;
-	x_next = FAO((node_t **)&x->next[0], 1);
+	x_next = __sync_fetch_and_or((node_t **)&x->next[0], 1);
     }
     while ( is_marked_ref(x_next) && (x = get_unmarked_ref(x_next)));
 
     assert(!is_marked_ref(x_next));
     x = x_next;
 
-#ifdef THREADOPTIM
-    pt = x;
-    old_offset += offset;
-    offset = old_offset;
-    obs_hp = old_obs_hp;
-#endif
 
     /* save value */
     v = x->v;
     k = x->k;
     
-    //x->k = KEY_MIN; /* reset key */
     if (newhead == NULL)
 	newhead = x;
-    /* if the offset is big enough, try to clean up 
-     * we swing the hp to the new auxiliary node x (which is deleted) 
-     */
-    if (offset <= l->max_offset || l->head->next[0] != obs_hp || (offset-l->nthreads) > l->max_offset || newhead == obs_hp) goto out;
+    /* if the offset is big enough, try to update and perform memory reclamation */
+    if (offset <= pq->max_offset || pq->head->next[0] != obs_hp || newhead == obs_hp) goto out;
 
-    /* fails if someone else already has updated the head node */
-    if (obs_hp == CASPO(&l->head->next[0], obs_hp, get_marked_ref(x)))
+    /* try to swing the hp to the new dummy node x, which is deleted */
+    if (__sync_bool_compare_and_swap(&pq->head->next[0], obs_hp, get_marked_ref(x)))
     {
-	
-	assert(offset > l->max_offset && (offset - l->nthreads) <= l->max_offset);
-	/* Here we own every node between old hp and x.	 */
-	/* retrieve the last deleted node for each level. */
-	/* will not change. */
-	lvl = search_end(l, preds, -1);
+	/* Update higher level pointers. */
+	restructure(pq);
 
-	// update upper levels
-	for (int i = lvl; i > 0; i--) {
-	    node_t *next = l->head->next[i];
-	    while (next != CASPO(&l->head->next[i], next, preds[i]->next[i]))
-	    { 
-		// we have a new beginning of the list.
-		search_end(l, preds, i);
-		next = l->head->next[i];
-	    }
-	}
-	/* We successfully swung the top head pointer.
-	 * Recycle all nodes from head pointer to the new logical head. */
+	/* We successfully swung the top head pointer. Recycle all
+	 * nodes between the head pointer and the new logical head. */
 	x_next = get_unmarked_ref(obs_hp);
 	while (x_next != get_unmarked_ref(x)) {
 	    free_node(x_next);
@@ -423,144 +335,23 @@ out:
     return k;
 }
 
-unsigned int
-num_digits (unsigned int i)
-{
-    return i > 0 ? (int) log10 ((double) i) + 1 : 1;
-}
-
-unsigned int
-highest_level(set_t *l) {
-    node_t *x, *x_next;
-    x = l->head;
-    for ( int i = l->max_level - 1; i >= 1; i-- )
-    {
-	x_next = x->next[i];
-	if (x_next->next[0] != END)
-	    return i;
-	
-    }
-    return 0;
-}
-
-void
-pprint (set_t *q)
-{
-    char *keyfrm = "%1.1f ";
-    char *keyfrm1 = "-> %1.1f ";
-    //char *keyfrm = "%3d ";
-    node_t *n, *bottom;
-    char *seps[] = {"-------", "----", "---", "--"};
-    unsigned int lvl = highest_level(q);
-
-    printf("\n");
-    for (int i = lvl; i >= 0; i--) {
-	/* start at top level */
-	printf("l%2d: ", i);
-
-	n = q->head;
-	printf(keyfrm, n->k);
-
-	n = get_unmarked_ref(q->head->next[i]);
-	bottom = get_unmarked_ref(q->head->next[0]);
-    
-	/* while toplevel has not reached end node... */
-	while (n != END) {
-	    /* and while bottom level has intermediate nodes */
-	    while (bottom != n)
-	    {
-		/* print arrows */
-		//printf("%s", seps[1 -1 ]);
-		printf("-------");
-		
-		bottom = get_unmarked_ref(bottom->next[0]);
-	    }
-	    /* bottom == n */
-	    
-	    printf(keyfrm1, n->k);
-	    
-	    bottom = get_unmarked_ref(bottom->next[0]);
-	    n = get_unmarked_ref(n->next[i]);
-	}
-	printf(" -|\n");
-    }
-
-    printf("top: ");
-    n = q->head;
-    while (n != END) {
-	printf(" t%2d,d%d", (int) n->level, is_marked_ref(n->next[0]));
-	n = get_unmarked_ref(n->next[0]);
-    }
-    printf("\n\n");
-    
-}
-
-void
-seq_test ()
-{
-    _init_gc_subsystem();
-    _init_set_subsystem();
-
-    set_t *q = set_alloc(5, 6, 1);
-
-    set_update(q, (double)5.1, (void *)5);
-    set_update(q, (double)7, (void *)7);
-    set_removemin(q);
-    set_update(q, 6, (void *)6);
-    set_update(q, 4, (void *)4);
-    set_removemin(q);
-    set_update(q, 10, (void *)10);
-    set_update(q, 9, (void *)9);
-
-    set_update(q, 4, (void *)4);
-    set_removemin(q);
-    set_removemin(q);
-    set_removemin(q);
-    set_update(q, 4, (void *)4);
-    pprint(q);
-    set_removemin(q);
-    pprint(q);
-    
-}
-
-void sequential_length(set_t *l) {
+void sequential_length(pq_t *pq) {
     node_t *x, *x_next;
     int cnt_del = 0, cnt = 0;
     
-    x = l->head;
+    x = pq->head;
     while (1)
     {
 	x_next = x->next[0];
+	if (x_next = pq->tail) goto out;
 	if (is_marked_ref(x_next)) {
 	    cnt_del++;
 	} else {
 	    cnt++;
 	}
  	x_next = get_unmarked_ref(x_next);
-	
-	// tail?
-	if ( x_next == 0xfefefefefefefefe) goto out;
-	x = x_next;
-	
     }
 out:
     printf("length: %d, of which %d deleted.\n", cnt+cnt_del, cnt_del);
     
 }
-
-
-void _init_set_subsystem(void)
-{
-    int i;
-
-    for ( i = 0; i < NUM_LEVELS; i++ )
-    {
-	// aligned memory
-        //gc_id[i] = gc_add_allocator(64*((63 + sizeof(node_t) + i*sizeof(node_t *))/64));
-	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
-	
-    }
-}
-
-
-

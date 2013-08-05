@@ -184,7 +184,7 @@ static struct {
     CACHE_PAD(0);
     bool_t alarm_time;
     CACHE_PAD(1);
-    set_t *set;
+    pq_t *set;
     CACHE_PAD(2);
 } shared;
 
@@ -228,7 +228,7 @@ static void alarm_handler( int arg)
 static void *thread_start(void *arg)
 {
     //unsigned long k, ok;
-    setkey_t k, ok;
+    pkey_t k, ok;
     int i, j;
     void *v;
     long id = (long)arg;
@@ -252,8 +252,8 @@ static void *thread_start(void *arg)
     if ( id == 0 )
     {
         _init_gc_subsystem();
-        _init_set_subsystem();
-        shared.set = set_alloc(max_offset, 20, num_threads);
+        //_init_set_subsystem();
+        shared.set = pq_init(max_offset);
 	exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS);
 	if (type == 0) {
 	    gen_exps(exps, EXPS, 1000);
@@ -262,7 +262,7 @@ static void *thread_start(void *arg)
 	}
 
 	for (i = 0; i < max_key; i++) {
-	    set_update(shared.set, exps[exps_pos],(void *) 0x32);
+	    insert(shared.set, exps[exps_pos],(void *) 0x32);
 	    exps_pos++;
 	    }
 
@@ -309,11 +309,11 @@ static void *thread_start(void *arg)
 	v = (void *)99999999999;
 
 	if (gsl_rng_uniform (rng[id]) < 0.5) {
-	    k = set_removemin(shared.set);
+	    k = deletemin(shared.set);
 	    assert(k != 0);
 	} else {
 	    j = __sync_fetch_and_add(&exps_pos, 1);
-	    set_update(shared.set, exps[j], v);
+	    insert(shared.set, exps[j], v);
 	}
 
 	//k = k + max_key;

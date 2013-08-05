@@ -1,7 +1,7 @@
-DEBUGGING := -g 
+DEBUGGING := -g -O0
 
 CC          := gcc -std=c99
-CFLAGS      := -O3 -DINTEL -fomit-frame-pointer
+CFLAGS      := -O3 -DINTEL -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
 #CFLAGS      += $(DEBUGGING)
@@ -9,32 +9,26 @@ LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
 COMMON_DEPS += Makefile $(wildcard *.h)
 
-GC_HARNESS_TARGETS := skip_cas prioq naive
+GC_HARNESS_TARGETS := prioq
 
 TARGETS    := $(GC_HARNESS_TARGETS)
 
-all: $(TARGETS) replay
+all: $(TARGETS)
 
 clean:
-	rm -f $(TARGETS) replay *~ core *.o *.a
-
-replay: %: %.c $(COMMON_DEPS)
-	$(CC) $(CFLAGS) -c -o $(patsubst %.c,%.o,$<) $<
-	$(CC) -o $@ $(patsubst %.c,%.o,$<) $(LDFLAGS)
+	rm -f $(TARGETS) *~ core *.o *.a
 
 
 %.o: %.c $(COMMON_DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(GC_HARNESS_TARGETS): %: %.o set_harness.o ptst.o gc.o j_util.o
-	$(CC) -o $@ $^ $(LDFLAGS)
-
-microtest: prioq.o ptst.o gc.o
-
-tsigas: LDFLAGS += -L${HOME}/NobleDemo64/Lib/Linux64_x86 -lNOBLEDEMO64
-tsigas: CFLAGS += -I${HOME}/NobleDemo64/Include
-tsigas: tsigas.o set_harness.o j_util.o
-	$(CC) -o $@ $^ $(LDFLAGS)
+#$(GC_HARNESS_TARGETS): %: %.o set_harness.o ptst.o gc.o j_util.o
+#	$(CC) -o $@ $^ $(LDFLAGS)
 
 unittests: %: %.o prioq.o ptst.o gc.o j_util.o
 	$(CC) -o $@ $^ $(LDFLAGS)
+
+perf_meas: %: %.o prioq.o ptst.o gc.o
+	$(CC) -o $@ $^ $(LDFLAGS)
+
+

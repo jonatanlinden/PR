@@ -9,7 +9,7 @@
 #include "prioq.h"
 #include "gc.h"
 
-static set_t *pq;
+static pq_t *pq;
 
 #define PER_THREAD 30
 
@@ -38,7 +38,7 @@ int test_parallel_add() {
     
     int new, old = -1;
     for (long i = 0; i < nthreads * PER_THREAD; i++) {
-	new = set_removemin(pq);
+	new = deletemin(pq);
 	assert (old < new);
 	old = new;
     }
@@ -52,7 +52,7 @@ int test_parallel_del() {
     printf("test parallel del, %d threads\n", nthreads);
 
     for (long i = 0; i < nthreads * PER_THREAD; i++) {
-	set_update(pq, i, (setval_t)i);
+	insert(pq, i, (val_t)i);
     }
 
 
@@ -74,9 +74,7 @@ int test_parallel_del() {
 
 int setup (int max_offset) {
     _init_gc_subsystem();
-    _init_set_subsystem();
-
-    pq = set_alloc(max_offset, 20, nthreads);
+    pq = pq_init(max_offset);
 }
 
 int teardown () {
@@ -118,7 +116,7 @@ add_thread(void *id) {
     int x;
     for(int i = 0; i < PER_THREAD; i++) {
 	x = base + i;
-	set_update(pq, base+i, (setval_t) base+i);
+	insert(pq, base+i, (val_t) base+i);
 	
     }
 }
@@ -126,7 +124,7 @@ add_thread(void *id) {
 void *removemin_thread(void *id) {
     int v, ov = -1;
     for(int i = 0; i < PER_THREAD; i++) {
-	v = set_removemin(pq);
+	v = deletemin(pq);
 	assert(v > ov);
 	ov = v;
     }

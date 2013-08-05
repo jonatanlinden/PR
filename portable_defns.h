@@ -53,18 +53,9 @@ do {                                                                    \
 /*
  * POINTER MARKING
  */
-//#define USE_FAA
-
-#ifdef USE_FAA
-#warning using faa
-#define get_marked_ref(_p)      ((void *)(((unsigned long)(_p)) | 63))
-#define get_unmarked_ref(_p)    ((void *)(((unsigned long)(_p)) & ~63))
-#define is_marked_ref(_p)       (((unsigned long)(_p)) & 63)
-#else
 #define get_marked_ref(_p)      ((void *)(((unsigned long)(_p)) | 1))
 #define get_unmarked_ref(_p)    ((void *)(((unsigned long)(_p)) & ~1))
 #define is_marked_ref(_p)       (((unsigned long)(_p)) & 1)
-#endif
 
 
 

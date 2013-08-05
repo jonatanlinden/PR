@@ -53,7 +53,7 @@
 #define INITIALISE_NODES(_p,_c) memset((_p), INVALID_BYTE, (_c));
 
 /* Number of unique block sizes we can deal with. */
-#define MAX_SIZES 20
+#define MAX_SIZES 32
 
 #define MAX_HOOKS 4
 
