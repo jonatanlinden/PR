@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-08-05 14:42:42 jonatanlinden>
+ * Time-stamp: <2013-08-05 14:51:59 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -74,7 +74,7 @@ usage(FILE *out, const char *argv0)
     fprintf(out, "\t-t GCYCLES\tRun for GCYCLES billion cycles. "
 	    "Default: %i\n",
 	    DEFAULT_GCYCLES);
-    fprintf(out, "\t-o OFFSET\tUse an offset of OFFSET nodes. Sensible values"           " \n\t\t\tcould be 64 for 8 threads, 400 for 32 threads. "
+    fprintf(out, "\t-o OFFSET\tUse an offset of OFFSET nodes. Sensible values"           " \n\t\t\tcould be 64 for 8 threads, 200 for 32 threads. "
 	    "\n\t\t\tDefault: %i\n",
 	    DEFAULT_OFFSET);
     fprintf(out, "\t-n NUM\t\tUse NUM threads. Default: %i\n",
