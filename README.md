@@ -6,21 +6,19 @@ A lock-free priority queue implementation based on Keir Fraser's skip list imple
 
 ### Build
 
-    make prioq
+    make perf_meas
 
 ### Usage
 
 Run the benchmark application as:
 
-    ./prioq 8 1000 15 64 2000
+    ./perf_meas -n 8 -t 27 -o 64 
     
-This will start 8 threads, simulating a PDES workload with
-exponentially distributed interevent times with an intensity of
-1000. The initial length of the list will be 2^15, the offset
-parameter of the algorithm will be set to 64, and the threads will
-perform a simulated local computation, taking about 2000 cycles,
-between access to the queue (an access = deletemin followed by an
+This will start a benchmark run with 8 threads, uniformly distributed
+keys, initial queue length of 2^15 elements, the offset parameter of
+the algorithm will be set to 64, and random operation (deletemin,
 insert).
+
 
 ### Build Dependencies
 
