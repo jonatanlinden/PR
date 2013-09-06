@@ -9,9 +9,7 @@ LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
 COMMON_DEPS += Makefile $(wildcard *.h)
 
-GC_HARNESS_TARGETS := prioq
-
-TARGETS    := $(GC_HARNESS_TARGETS)
+TARGETS    := perf_meas unittests
 
 all: $(TARGETS)
 
@@ -30,5 +28,4 @@ unittests: %: %.o prioq.o ptst.o gc.o j_util.o
 
 perf_meas: %: %.o prioq.o ptst.o gc.o
 	$(CC) -o $@ $^ $(LDFLAGS)
-
 
