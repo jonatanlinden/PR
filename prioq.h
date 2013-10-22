@@ -5,7 +5,6 @@ typedef void         *val_t;
 #define NUM_LEVELS 32
 
 /* Internal key values with special meanings. */
-//#define INVALID_FIELD   (0)    /* Uninitialised field value.     */
 #define SENTINEL_KEYMIN ( 0UL) /* Key value of first dummy node. */
 #define SENTINEL_KEYMAX (~1UL) /* Key value of last dummy node.  */
 
@@ -30,7 +29,7 @@ typedef struct
 } pq_t;
 
 
-/* use_this externally */
+/* Interface */
 
 extern pq_t *pq_init(int max_offset);
 

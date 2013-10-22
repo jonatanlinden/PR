@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-08-05 14:51:59 jonatanlinden>
+ * Time-stamp: <2013-10-03 14:09:47 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -24,12 +24,32 @@
 #include "prioq.h"
 #include "gc.h"
 
+
+
 #define DEFAULT_GCYCLES 10
 #define DEFAULT_NTHREADS 1
 #define DEFAULT_OFFSET 64
 
 
 #define PIN
+
+pid_t 
+gettid(void) 
+{
+    return (pid_t) syscall(SYS_gettid);
+}
+
+
+void
+pin(pid_t t, int cpu) 
+{
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu, &cpuset);
+    E_en(sched_setaffinity(t, sizeof(cpu_set_t), &cpuset));
+}
+
+
 
 void *run (void *_args);
 
@@ -47,21 +67,6 @@ unsigned long measure = 0;
 
 
 #define NOW() read_tsc_p()
-
-pid_t 
-gettid(void) 
-{
-    return (pid_t) syscall(SYS_gettid);
-}
-
-void
-pin(pid_t t, int cpu) 
-{
-  cpu_set_t cpuset;
-  CPU_ZERO(&cpuset);
-  CPU_SET(cpu, &cpuset);
-  sched_setaffinity(t, sizeof(cpu_set_t), &cpuset);
-}
 
 static void
 usage(FILE *out, const char *argv0)
