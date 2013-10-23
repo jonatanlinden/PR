@@ -81,11 +81,25 @@ alloc_node(pq_t *q)
     return n;
 }
 
+void print_node(node_t *node)
+{
+    printf("node: %p\n", node);
+    printf("level: %d\n", node->level);
+    printf("ins: %d\n", node->inserting);
+    for (int i = node->level - 1; i >= 0; i--)
+    {
+	printf("next[%d]: %p\n", i, node->next[i]);
+    }
+
+}
+
+
 
 /* Free a node to the garbage collector. */
 static inline void 
 free_node(node_t *n)
 {
+    //n->inserting |= 2;
     gc_free(ptst, (void *)n, gc_id[(n->level) - 1]);
 }
 
@@ -185,16 +199,14 @@ retry:
     }
 
     new->next[0] = succ;
-    IWMB();
     
-    
+    assert(!is_marked_ref(succ));
     /* We've committed when we've inserted at the bottom level. */
     if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succ, new)) {
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded */
 	goto retry;
     }
-
 
     /* Insert at each of the other levels in turn. */
     i = 1;
@@ -211,8 +223,7 @@ retry:
 	
 
 	new->next[i] = succ;
-	IWMB();
-	
+
         if (!__sync_bool_compare_and_swap(&pred->next[i], succ, new))
         {
 	    /* competing insert */
@@ -231,7 +242,6 @@ retry:
 success:
     if (new) {
 	new->inserting = 0;
-	IWMB();
     }
     
     critical_exit();
@@ -244,6 +254,7 @@ restructure(pq_t *pq)
 {
     node_t *pred, *cur, *h;
     int i = NUM_LEVELS - 1;
+
     pred = pq->head;
     while (i > 0) {
 	h = pq->head->next[i];
@@ -256,61 +267,21 @@ restructure(pq_t *pq)
 	while(is_marked_ref(cur->next[0])) {
 	    pred = cur;
 	    cur = pred->next[i];
-	    IRMB();
 	}
-	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,pred->next[i]))
-	    i--;
-    }
-}
-/*
-void
-wie_restructure (pq_t *pq)
-{
-    int i = NUM_LEVELS -1;
+	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,pred->next[i])){
+	    if((pq->head->next[i]->inserting & 2)) {
+		printf("at level: %d\n", i);
 
-    while (i > 0) {
-	node_t *next = l->head->next[i];
-	while (next != CASPO(&l->head->next[i], next, preds[i]->next[i]))
-	{
-	    // we have a new beginning of the list.
-	    search_end(l, preds, i);
-	    next = l->head->next[i];
-	}
-    }
-    for (int i = start_lvl; i >= 1; i-- )
-    {
-	for ( ; ; )
-	{
-	    x_next = get_unmarked_ref(x->next[i]);
-	    if (!is_marked_ref(x_next->next[0])) break;
-	    x = x_next;
-	    assert(x != END);
-	}
-	pa[i] = x;
-    }
-}
-*/
-
-/*
-void
-old_restructure(pq_t *pq)
-{
-    node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS], *hs[NUM_LEVELS];
-    node_t *pred, *cur;
-    for (int i = NUM_LEVELS - 1; i > 0; i--)
-    {
-	hs[i] = pq.head->next[i];
-    }
-    locate_preds(pq, 0, preds, succs);
-
-    int level = NUM_LEVELS - 1;
-    while (level > 0) {
-	if (__sync_bool_compare_and_swap(&pq->head->next[i],hs[i],preds[i]->next[i])) {
+		print_node(pred->next[i]);
+		print_node(pred);
+	    }
+	    
 	    i--;
 	}
+	
     }
 }
-*/
+
 
 
 pkey_t
@@ -319,7 +290,7 @@ deletemin(pq_t *pq)
     val_t   v = NULL;
     pkey_t   k = 0;
     node_t *preds[NUM_LEVELS];
-    node_t *x, *nxt, *observed_hp, *newhead, *nxt_ref;
+    node_t *x, *nxt, *observed_hp = NULL, *newhead, *rec_it;
     int offset, lvl;
     
     newhead = NULL;
@@ -328,28 +299,26 @@ deletemin(pq_t *pq)
     critical_enter();
     
     x = pq->head;
-    observed_hp = x->next[0];
+//    observed_hp = x->next[0];
 
     do {
 	offset++;
 
-	IRMB();
+	IRMB(); // speed optimization
 	nxt = x->next[0]; // expensive
-
-	if (nxt == pq->tail){
+	if (observed_hp == NULL) observed_hp = nxt;
+	
+	if (nxt == pq->tail) {
 	    k = KEY_NULL; // tail cannot be deleted
 	    goto out;
 	}
-	
-	nxt_ref = get_unmarked_ref(nxt);
-	if (newhead == NULL && nxt_ref->inserting) {
-	    newhead = nxt_ref;
-	}
+
+	if (newhead == NULL && x->inserting) newhead = x;
 
 	if (is_marked_ref(nxt)) continue;
 	/* the marker is on the preceding pointer */
-	/* linearisation */
-	nxt = __sync_fetch_and_or((node_t **)&x->next[0], 1);
+        /* linearisation point deletemin */
+	nxt = __sync_fetch_and_or(&x->next[0], 1); 	
     }
     while ( is_marked_ref(nxt) && (x = get_unmarked_ref(nxt)));
 
@@ -369,15 +338,15 @@ deletemin(pq_t *pq)
     if (__sync_bool_compare_and_swap(&pq->head->next[0], observed_hp, get_marked_ref(newhead)))
     {
 	/* Update higher level pointers. */
-
 	restructure(pq);
 
 	/* We successfully swung the top head pointer. Recycle all
 	 * nodes between the head pointer and the new logical head. */
-	nxt = get_unmarked_ref(observed_hp);
-	while (nxt != get_unmarked_ref(newhead)) {
-	    free_node(nxt);
-	    nxt = get_unmarked_ref(nxt->next[0]);
+	rec_it = get_unmarked_ref(observed_hp);
+	while (rec_it != get_unmarked_ref(newhead)) {
+	    assert(is_marked_ref(rec_it->next[0]));
+	    free_node(rec_it);
+	    rec_it = get_unmarked_ref(rec_it->next[0]);
 
 	}
     }
@@ -406,3 +375,6 @@ out:
     printf("length: %d, of which %d deleted.\n", cnt+cnt_del, cnt_del);
     
 }
+
+
+

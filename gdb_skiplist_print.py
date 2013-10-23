@@ -51,10 +51,7 @@ head node, called "head"."""
         node = gdb.Value(node).cast(p_node_t).dereference()
         print node
         i = 1
-#        while node['k'] < stop_key:
         while i < max_iter:
-#            print "node@%s: %s #%d" % (node, node.dereference(), i)
-
             node = node['next'].dereference()
             node = gdb.Value(node).cast(long_t)
             node = node & ~1

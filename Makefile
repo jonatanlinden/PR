@@ -1,11 +1,11 @@
 DEBUGGING := -g -O0
 
 CC          := gcc -std=c99
-CFLAGS      := -O0 -DINTEL -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
+CFLAGS      := -O3 -DINTEL -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
 LDFLAGS     := -lpthread `pkg-config --libs glib-2.0 gsl`
 
-CFLAGS      += $(DEBUGGING)
-#CFLAGS       += -DNDEBUG
+#CFLAGS      += $(DEBUGGING)
+CFLAGS       += -DNDEBUG
 
 COMMON_DEPS += Makefile $(wildcard *.h)
 
