@@ -52,11 +52,8 @@
 #include "prioq.h"
 #include "ptst.h"
 
-
-
+/* The thread state. */
 __thread ptst_t *ptst;
-
-
 
 static int gc_id[NUM_LEVELS];
 
@@ -81,37 +78,48 @@ alloc_node(pq_t *q)
     return n;
 }
 
-void print_node(node_t *node)
-{
-    printf("node: %p\n", node);
-    printf("level: %d\n", node->level);
-    printf("ins: %d\n", node->inserting);
-    for (int i = node->level - 1; i >= 0; i--)
-    {
-	printf("next[%d]: %p\n", i, node->next[i]);
-    }
 
-}
-
-
-
-/* Free a node to the garbage collector. */
+/* Mark node as ready for reclamation to the garbage 
+ * collector. */
 static inline void 
 free_node(node_t *n)
 {
-    //n->inserting |= 2;
     gc_free(ptst, (void *)n, gc_id[(n->level) - 1]);
 }
 
+
+/* Locatepreds
+ * Record predecessors and non-deleted successors of key k.  If k
+ * exists in list, the node will be in succs[0]
+
+ * Variable skew indicates that some node in succs is * deleted, but
+ * that this was not noticed at the relevant level.
+ *
+ * Skew example illustration, when locating 3. Level 1 is shifted
+ * in relation to level 0, due to not noticing that s[1] is deleted
+ * until level 0 is reached.
+ *
+ *                   p[0] 
+ * p[2]  p[1]        s[1]  s[0]  s[2]
+ *  |     |           |     |     |
+ *  v     |           |     |     v
+ *  _     v           v     |     _ 
+ * | |    _           _	    v    | |
+ * | |   | |    _    | |    _    | |
+ * | |   | |   | |   | |   | |   | |
+ *  0     1     2     4     6     7
+ *  d     d     d
+ *
+ */
+
 static int
-locate_preds(pq_t *pq, pkey_t k, node_t **pa, node_t **na)
+locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 {
     node_t *x, *x_next;
-    int skew = 0, d = 0;
+    int skew = 0, d = 0, i;
 
-    int i = NUM_LEVELS - 1;
     x = pq->head;
-
+    i = NUM_LEVELS - 1;
     while (i >= 0)
     {
 	x_next = x->next[i];
@@ -119,28 +127,25 @@ locate_preds(pq_t *pq, pkey_t k, node_t **pa, node_t **na)
 	x_next = get_unmarked_ref(x_next);
         while (x_next->k < k || is_marked_ref(x_next->next[0]) 
 	       || ((i == 0) && d)) {
-	    if (i < (NUM_LEVELS - 1) && (x_next == na[i+1])) {
+	    if (i < (NUM_LEVELS - 1) && (x_next == succs[i+1])) {
 		skew = 1;
 	    }
 	    x = x_next;
-	    __sync_synchronize();
 	    x_next = x->next[i];
 	    d = is_marked_ref(x_next);
 	    x_next = get_unmarked_ref(x_next);
 	}
-        if ( pa ) pa[i] = x;
-        if ( na ) na[i] = x_next;
+        preds[i] = x;
+        succs[i] = x_next;
 	i--;
     }
+    assert(!is_marked_ref(succs[0]));
     return skew;
 }
 
-
-
 /*
- * PUBLIC FUNCTIONS
+ * Init structure, setup sentinel head and tail nodes.
  */
-
 pq_t *
 pq_init(int max_offset)
 {
@@ -171,13 +176,38 @@ pq_init(int max_offset)
     return pq;
 }
 
+/* Mark all the nodes for recycling. */
+void
+pq_destroy(pq_t *pq)
+{
+    node_t *cur, *pred;
+    cur = pq->head;
+while (cur != pq->tail) {
+	pred = cur;
+	cur = get_unmarked_ref(pred->next[0]);
+	free_node(pred);
+    }
+    free_node(cur); //tail
+}
 
+
+/* 
+ * Insert a new node n with key k and value v.
+ * The node will not be inserted if another node with key k is already
+ * present in the list.
+ *
+ * The predecessors, preds, and successors, succs, at all levels are
+ * recorded, after which the node n is inserted from bottom to
+ * top. Conditioned on that succs[i] is still the successor of
+ * preds[i], n will be spliced in on level i.
+ *
+ */
 void 
 insert(pq_t *pq, pkey_t k, val_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
-    node_t *pred, *succ, *new = NULL;
-    int        i, level, skew = 0;
+    node_t *new = NULL;
+    int skew = 0;
 
     critical_enter();
     
@@ -185,59 +215,52 @@ insert(pq_t *pq, pkey_t k, val_t v)
     new    = alloc_node(pq);
     new->k = k;
     new->v = v;
-    level = new->level;
+
 
 retry:
-
     skew = locate_preds(pq, k, preds, succs);
-    succ = succs[0];
-    pred = preds[0];
 
-    if (succ->k == k && !is_marked_ref(pred->next[0]) && pred->next[0] == succ) {
+    /* return if key already exists, i.e., is present in a non-deleted
+     * node */
+    if (succs[0]->k == k && !is_marked_ref(preds[0]->next[0]) && preds[0]->next[0] == succs[0]) {
 	free_node(new);
 	goto success;
     }
-
-    new->next[0] = succ;
+    new->next[0] = succs[0];
     
-    assert(!is_marked_ref(succ));
-    /* We've committed when we've inserted at the bottom level. */
-    if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succ, new)) {
+    /* The node is logically inserted once it is present at the bottom
+     * level. */
+    if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succs[0], new)) {
 	/* either succ has been deleted (modifying preds[0]),
-	 * or another insert has succeeded */
+	 * or another insert has succeeded or preds[0] is head, 
+	 * and a restructure operation is underway */
 	goto retry;
     }
 
     /* Insert at each of the other levels in turn. */
-    i = 1;
-    
-    while ( i < level && !skew)
+    int i = 1;
+    while ( i < new->level && !skew)
     {
-        pred = preds[i];
-	succ = succs[i];
-
 	/* if successor of new is deleted, we're done */
 	if (is_marked_ref(new->next[0])) {
 	    goto success;
 	}
-	
 
-	new->next[i] = succ;
+	/* prepare next pointer of new node */
+	new->next[i] = succs[i];
 
-        if (!__sync_bool_compare_and_swap(&pred->next[i], succ, new))
+        if (!__sync_bool_compare_and_swap(&preds[i]->next[i], succs[i], new))
         {
-	    /* competing insert */
+	    /* failed due to competing insert or restruct */
             skew = locate_preds(pq, k, preds, succs);
 
-	    if (succs[0] != new) {
-		goto success;
-	    }
+	    /* if new has been deleted, we're done */
+	    if (succs[0] != new) goto success;
 	    
         } else {
 	    /* Succeeded at this level. */
 	    i++;
 	}
-	
     }
 success:
     if (new) {
@@ -248,7 +271,26 @@ success:
 }
 
 
-
+/* Restructure
+ *
+ * Update the head node's pointers from level 1 and up. Will locate
+ * the last node at each level that has the delete flag set, and set
+ * the head to point to the successor of that node. After completion,
+ * if operating in isolation, for each level i, it holds that
+ * head->next[i-1] is before or equal to head->next[i]. 
+ *
+ * Illustration after:
+ *
+ *             h[0]  h[1]  h[2]
+ *              |     |     |
+ *              |     |     v
+ *  _           |     v     _ 
+ * | |    _     v     _	   | |
+ * | |   | |    _    | |   | |
+ * | |   | |   | |   | |   | |
+ *  d     d
+  
+ */
 void
 restructure(pq_t *pq)
 {
@@ -257,62 +299,64 @@ restructure(pq_t *pq)
 
     pred = pq->head;
     while (i > 0) {
-	h = pq->head->next[i];
+	h = pq->head->next[i]; /* record observed head */
 	IRMB();
-	cur = pred->next[i];
+	cur = pred->next[i]; /* take one step forward from pred */
 	if (!is_marked_ref(h->next[0])) {
 	    i--;
 	    continue;
 	}
+	/* traverse level until non-marked node is found 
+	 * pred will always have its delete flag set 
+	 */
 	while(is_marked_ref(cur->next[0])) {
 	    pred = cur;
 	    cur = pred->next[i];
 	}
-	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,pred->next[i])){
-	    if((pq->head->next[i]->inserting & 2)) {
-		printf("at level: %d\n", i);
-
-		print_node(pred->next[i]);
-		print_node(pred);
-	    }
-	    
+	/* swing head pointer */
+	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,pred->next[i]))
 	    i--;
-	}
-	
     }
 }
 
 
-
+/* deletemin
+ * Delete element with smallest key in queue.
+ * Try to update the head node's pointers, if offset > max_offset.
+ */
 pkey_t
 deletemin(pq_t *pq)
 {
     val_t   v = NULL;
     pkey_t   k = 0;
     node_t *preds[NUM_LEVELS];
-    node_t *x, *nxt, *observed_hp = NULL, *newhead, *rec_it;
+    node_t *x, *nxt, *obs_head = NULL, *newhead, *cur;
     int offset, lvl;
     
     newhead = NULL;
     offset = lvl = 0;
 
     critical_enter();
-    
+
     x = pq->head;
-//    observed_hp = x->next[0];
+    obs_head = x->next[0];
 
     do {
 	offset++;
 
 	IRMB(); // speed optimization
-	nxt = x->next[0]; // expensive
-	if (observed_hp == NULL) observed_hp = nxt;
-	
-	if (nxt == pq->tail) {
-	    k = KEY_NULL; // tail cannot be deleted
+        /* expensive, high probability that this cache line has
+	 * been modified */
+	nxt = x->next[0]; 
+
+        // tail cannot be deleted
+	if (get_unmarked_ref(nxt) == pq->tail) {
+	    k = KEY_NULL;
 	    goto out;
 	}
 
+	// Do not allow head to point past a node currently being
+	// inserted.
 	if (newhead == NULL && x->inserting) newhead = x;
 
 	if (is_marked_ref(nxt)) continue;
@@ -329,25 +373,32 @@ deletemin(pq_t *pq)
     v = x->v;
     k = x->k;
     
+    // If no inserting node was traversed, then propose x as the new head.
     if (newhead == NULL)
 	newhead = x;
-    /* if the offset is big enough, try to update and perform memory reclamation */
-    if (offset <= pq->max_offset || pq->head->next[0] != observed_hp || get_marked_ref(newhead) == observed_hp) goto out;
+    /* if the offset is big enough, try to update the head node and
+     * perform memory reclamation */
+    if (offset <= pq->max_offset) goto out;
 
+    /* Two lines: Optimization. Marginally faster */
+    IRMB();
+    if (pq->head->next[0] != obs_head) goto out;
+    
     /* try to swing the hp to the new dummy node x, which is deleted */
-    if (__sync_bool_compare_and_swap(&pq->head->next[0], observed_hp, get_marked_ref(newhead)))
+    if (__sync_bool_compare_and_swap(&pq->head->next[0], obs_head, get_marked_ref(newhead)))
     {
 	/* Update higher level pointers. */
 	restructure(pq);
 
-	/* We successfully swung the top head pointer. Recycle all
-	 * nodes between the head pointer and the new logical head. */
-	rec_it = get_unmarked_ref(observed_hp);
-	while (rec_it != get_unmarked_ref(newhead)) {
-	    assert(is_marked_ref(rec_it->next[0]));
-	    free_node(rec_it);
-	    rec_it = get_unmarked_ref(rec_it->next[0]);
+	/* We successfully swung the top head pointer. Mark all nodes
+	 * between the head pointer and the new head for recycling. */
 
+	cur = get_unmarked_ref(obs_head);
+	while (cur != get_unmarked_ref(newhead)) {
+	    nxt = get_unmarked_ref(cur->next[0]);
+	    assert(is_marked_ref(cur->next[0]));
+	    free_node(cur);
+	    cur = nxt;
 	}
     }
 out:

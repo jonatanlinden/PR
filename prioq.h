@@ -33,6 +33,8 @@ typedef struct
 
 extern pq_t *pq_init(int max_offset);
 
+extern void pq_destroy(pq_t *pq);
+
 extern void insert(pq_t *pq, pkey_t k, val_t v);
 
 extern pkey_t deletemin(pq_t *pq);

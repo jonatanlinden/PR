@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-10-03 14:09:47 jonatanlinden>
+ * Time-stamp: <2013-10-24 13:03:03 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -126,7 +126,7 @@ main (int argc, char **argv)
 
 
     /* RUN the workloads */
-    for (int i = 0; i < nthreads; i++) {
+    for (long i = 0; i < nthreads; i++) {
 	pthread_create(&ts[i], NULL, run, (void *)i);
     }
 
@@ -144,6 +144,7 @@ main (int argc, char **argv)
     printf("test_harness, measure: %d\n", measure);
     
     /* FREE */
+    pq_destroy(pq);
     free (rng);
     free (ts);
     _destroy_gc_subsystem();
@@ -152,7 +153,7 @@ main (int argc, char **argv)
 
 
 __thread gsl_rng *rng;
-__thread int id;
+__thread long id;
 
 inline int __attribute__((always_inline))
 work (pq_t *pq)  
@@ -170,7 +171,7 @@ work (pq_t *pq)
 void *
 run (void *_args)
 {
-    id = (int)_args;
+    id = (long)_args;
     int cnt = 0;
 
 #ifdef PIN
