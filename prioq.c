@@ -125,6 +125,7 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 	x_next = x->next[i];
 	d = is_marked_ref(x_next);
 	x_next = get_unmarked_ref(x_next);
+	
         while (x_next->k < k || is_marked_ref(x_next->next[0]) 
 	       || ((i == 0) && d)) {
 	    if (i < (NUM_LEVELS - 1) && (x_next == succs[i+1])) {
@@ -176,7 +177,7 @@ pq_init(int max_offset)
     return pq;
 }
 
-/* Mark all the nodes for recycling. */
+/* Cleanup, mark all the nodes for recycling. */
 void
 pq_destroy(pq_t *pq)
 {
@@ -191,7 +192,7 @@ while (cur != pq->tail) {
 }
 
 
-/* 
+/* ** insert **
  * Insert a new node n with key k and value v.
  * The node will not be inserted if another node with key k is already
  * present in the list.
@@ -227,7 +228,7 @@ retry:
 	goto success;
     }
     new->next[0] = succs[0];
-    
+
     /* The node is logically inserted once it is present at the bottom
      * level. */
     if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succs[0], new)) {
@@ -241,14 +242,15 @@ retry:
     int i = 1;
     while ( i < new->level && !skew)
     {
+        /* optimization (?) */
+	IRMB(); 
+	
 	/* if successor of new is deleted, we're done */
-	if (is_marked_ref(new->next[0])) {
-	    goto success;
-	}
+	if (is_marked_ref(new->next[0])) goto success;
 
 	/* prepare next pointer of new node */
 	new->next[i] = succs[i];
-
+	
         if (!__sync_bool_compare_and_swap(&preds[i]->next[i], succs[i], new))
         {
 	    /* failed due to competing insert or restruct */
@@ -265,6 +267,7 @@ retry:
 success:
     if (new) {
 	new->inserting = 0;
+	IWMB();
     }
     
     critical_exit();
@@ -300,7 +303,7 @@ restructure(pq_t *pq)
     pred = pq->head;
     while (i > 0) {
 	h = pq->head->next[i]; /* record observed head */
-	IRMB();
+	IRMB(); /* the order of these reads must be maintained */
 	cur = pred->next[i]; /* take one step forward from pred */
 	if (!is_marked_ref(h->next[0])) {
 	    i--;
@@ -347,7 +350,7 @@ deletemin(pq_t *pq)
 	IRMB(); // speed optimization
         /* expensive, high probability that this cache line has
 	 * been modified */
-	nxt = x->next[0]; 
+	nxt = x->next[0];
 
         // tail cannot be deleted
 	if (get_unmarked_ref(nxt) == pq->tail) {
@@ -359,23 +362,24 @@ deletemin(pq_t *pq)
 	// inserted.
 	if (newhead == NULL && x->inserting) newhead = x;
 
+	/* optimization */
 	if (is_marked_ref(nxt)) continue;
 	/* the marker is on the preceding pointer */
         /* linearisation point deletemin */
-	nxt = __sync_fetch_and_or(&x->next[0], 1); 	
+	nxt = __sync_fetch_and_or(&x->next[0], 1);
     }
-    while ( is_marked_ref(nxt) && (x = get_unmarked_ref(nxt)));
+    while ( (x = get_unmarked_ref(nxt)) && is_marked_ref(nxt) );
 
-    assert(!is_marked_ref(nxt));
-    x = nxt;
+    assert(!is_marked_ref(x));
 
     /* save value */
     v = x->v;
     k = x->k;
     
-    // If no inserting node was traversed, then propose x as the new head.
-    if (newhead == NULL)
-	newhead = x;
+    /* If no inserting node was traversed, then use the latest 
+     * deleted node as new lowest-level head pointed node */
+    if (newhead == NULL) newhead = x;
+
     /* if the offset is big enough, try to update the head node and
      * perform memory reclamation */
     if (offset <= pq->max_offset) goto out;
@@ -384,7 +388,8 @@ deletemin(pq_t *pq)
     IRMB();
     if (pq->head->next[0] != obs_head) goto out;
     
-    /* try to swing the hp to the new dummy node x, which is deleted */
+    /* try to swing the lowest level head pointer to point to newhead,
+     * which is deleted */
     if (__sync_bool_compare_and_swap(&pq->head->next[0], obs_head, get_marked_ref(newhead)))
     {
 	/* Update higher level pointers. */

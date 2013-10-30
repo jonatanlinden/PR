@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-10-24 13:03:03 jonatanlinden>
+ * Time-stamp: <2013-10-28 13:40:02 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -141,7 +141,7 @@ main (int argc, char **argv)
 	pthread_join(ts[i], NULL);
 
 
-    printf("test_harness, measure: %d\n", measure);
+    printf("%d\n", measure);
     
     /* FREE */
     pq_destroy(pq);

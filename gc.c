@@ -46,7 +46,7 @@
 
 /*#define MINIMAL_GC*/
 /*#define YIELD_TO_HELP_PROGRESS*/
-#define PROFILE_GC
+//#define PROFILE_GC
 
 /* Recycled nodes are filled with this value if WEAK_MEM_ORDER. */
 #define INVALID_BYTE 0
