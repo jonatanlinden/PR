@@ -4,12 +4,12 @@
  * Lock-free concurrent priority queue.
  *
  * Copyright (c) 2012-2013, Jonatan Linden
- * with parts copyright (c) 2001-2003, Keir Fraser
- * All rights reserved.
  * 
- * Adapted from Keir Fraser's skiplist, available at 
+ * Adapted from Keir Fraser's skiplist, 
+ * Copyright (c) 2001-2003, Keir Fraser
+ * 
+ * Keir Fraser's skiplist is available at
  * http://www.cl.cam.ac.uk/research/srg/netos/lock-free/.
- *
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -88,11 +88,11 @@ free_node(node_t *n)
 }
 
 
-/* Locatepreds
+/***** locate_preds *****
  * Record predecessors and non-deleted successors of key k.  If k
  * exists in list, the node will be in succs[0]
-
- * Variable skew indicates that some node in succs is * deleted, but
+ *
+ * Variable skew indicates that some node in succs is deleted, but
  * that this was not noticed at the relevant level.
  *
  * Skew example illustration, when locating 3. Level 1 is shifted
@@ -144,55 +144,9 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
     return skew;
 }
 
-/*
- * Init structure, setup sentinel head and tail nodes.
- */
-pq_t *
-pq_init(int max_offset)
-{
-    pq_t *pq;
-    node_t *t, *h;
-    int i;
-
-    /* align head and tail nodes */
-    t = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    h = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-
-    t->k = SENTINEL_KEYMAX;
-    h->k = SENTINEL_KEYMIN;
-    h->level = NUM_LEVELS;
-    t->level = NUM_LEVELS;
-    
-    for ( i = 0; i < NUM_LEVELS; i++ )
-        h->next[i] = t;
-
-    pq = malloc(sizeof *pq);
-    pq->head = h;
-    pq->tail = t;
-    pq->max_offset = max_offset;
-
-    for (int i = 0; i < NUM_LEVELS; i++ )
-	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
-
-    return pq;
-}
-
-/* Cleanup, mark all the nodes for recycling. */
-void
-pq_destroy(pq_t *pq)
-{
-    node_t *cur, *pred;
-    cur = pq->head;
-while (cur != pq->tail) {
-	pred = cur;
-	cur = get_unmarked_ref(pred->next[0]);
-	free_node(pred);
-    }
-    free_node(cur); //tail
-}
 
 
-/* ** insert **
+/***** insert *****
  * Insert a new node n with key k and value v.
  * The node will not be inserted if another node with key k is already
  * present in the list.
@@ -261,7 +215,12 @@ retry:
 	    
         } else {
 	    /* Succeeded at this level. */
+	    if (i > 1 && (new->next[i]->k < new->next[i-1]->k) && !is_marked_ref(preds[0]->next[0]) && !is_marked_ref(new->next[0]))
+		printf("bug");
+	    
+	    
 	    i++;
+
 	}
     }
 success:
@@ -274,7 +233,7 @@ success:
 }
 
 
-/* Restructure
+/***** restructure *****
  *
  * Update the head node's pointers from level 1 and up. Will locate
  * the last node at each level that has the delete flag set, and set
@@ -282,7 +241,7 @@ success:
  * if operating in isolation, for each level i, it holds that
  * head->next[i-1] is before or equal to head->next[i]. 
  *
- * Illustration after:
+ * Illustration valid state after completion:
  *
  *             h[0]  h[1]  h[2]
  *              |     |     |
@@ -292,7 +251,7 @@ success:
  * | |   | |    _    | |   | |
  * | |   | |   | |   | |   | |
  *  d     d
-  
+ * 
  */
 void
 restructure(pq_t *pq)
@@ -324,8 +283,12 @@ restructure(pq_t *pq)
 
 
 /* deletemin
+ *
  * Delete element with smallest key in queue.
  * Try to update the head node's pointers, if offset > max_offset.
+ *
+ * Traverse level 0 next pointers until one is found that does
+ * not have the delete bit set. 
  */
 pkey_t
 deletemin(pq_t *pq)
@@ -410,6 +373,54 @@ out:
     critical_exit();
     return k;
 }
+
+/*
+ * Init structure, setup sentinel head and tail nodes.
+ */
+pq_t *
+pq_init(int max_offset)
+{
+    pq_t *pq;
+    node_t *t, *h;
+    int i;
+
+    /* align head and tail nodes */
+    t = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
+    h = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
+
+    t->k = SENTINEL_KEYMAX;
+    h->k = SENTINEL_KEYMIN;
+    h->level = NUM_LEVELS;
+    t->level = NUM_LEVELS;
+    
+    for ( i = 0; i < NUM_LEVELS; i++ )
+        h->next[i] = t;
+
+    pq = malloc(sizeof *pq);
+    pq->head = h;
+    pq->tail = t;
+    pq->max_offset = max_offset;
+
+    for (int i = 0; i < NUM_LEVELS; i++ )
+	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
+
+    return pq;
+}
+
+/* Cleanup, mark all the nodes for recycling. */
+void
+pq_destroy(pq_t *pq)
+{
+    node_t *cur, *pred;
+    cur = pq->head;
+while (cur != pq->tail) {
+	pred = cur;
+	cur = get_unmarked_ref(pred->next[0]);
+	free_node(pred);
+    }
+    free_node(cur); //tail
+}
+
 
 void sequential_length(pq_t *pq) {
     node_t *x, *nxt;

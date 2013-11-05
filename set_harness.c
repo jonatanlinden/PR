@@ -63,7 +63,6 @@
 #include "j_util.h"
 
 
-
 #define MAX_ITERATIONS 100000000
 #define MAX_WALL_TIME 10 /* seconds */
 
@@ -248,7 +247,7 @@ static void *thread_start(void *arg)
     rng[id] = gsl_rng_alloc(gsl_rng_mt19937);
     gsl_rng_set(rng[id], time(NULL)+id);
     
-#define EXPS 100000000
+#define EXPS 130000000
     if ( id == 0 )
     {
         _init_gc_subsystem();
@@ -308,12 +307,19 @@ static void *thread_start(void *arg)
 
 	v = (void *)99999999999;
 
-	if (gsl_rng_uniform (rng[id]) < 0.5) {
+	if (type == 0) {
 	    k = deletemin(shared.set);
 	    assert(k != 0);
-	} else {
 	    j = __sync_fetch_and_add(&exps_pos, 1);
 	    insert(shared.set, exps[j], v);
+	} else {
+	    if (gsl_rng_uniform (rng[id]) < 0.5) {
+		k = deletemin(shared.set);
+		assert(k != 0);
+	    } else {
+		j = __sync_fetch_and_add(&exps_pos, 1);
+		insert(shared.set, exps[j], v);
+	    }
 	}
 
 	//k = k + max_key;

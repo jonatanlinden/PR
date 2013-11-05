@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-10-28 13:40:02 jonatanlinden>
+ * Time-stamp: <2013-11-04 11:34:20 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -19,6 +19,7 @@
 #include <gsl/gsl_randist.h>
 #include <sched.h>
 #include <sys/syscall.h>
+#include <math.h>
 
 #include "common.h"
 #include "prioq.h"
@@ -158,13 +159,26 @@ __thread long id;
 inline int __attribute__((always_inline))
 work (pq_t *pq)  
 {
-    uint64_t elem = (uint64_t) gsl_rng_get(rng);
+    uint64_t elem;
 
     if (gsl_rng_uniform(rng) < 0.5) {
+	elem = (uint64_t) gsl_rng_get(rng);
 	insert(pq, elem, (void *)elem);
     } else {
 	deletemin(pq);
     }
+    return 1;
+}
+
+inline int __attribute__((always_inline))
+work_exp (pq_t *pq)  
+{
+    uint64_t elem;
+    uint64_t old = deletemin(pq);
+    elem = old + (unsigned long)ceil(gsl_ran_exponential(rng, 10000));
+    
+    insert(pq, elem, (void *)elem);
+
     return 1;
 }
 
@@ -197,7 +211,7 @@ run (void *_args)
 
     gsl_rng_free(rng);
     __sync_fetch_and_add(&measure, cnt);
-    //printf("bailing out: %d, %d\n", id, cnt);
+
     
     return NULL;
 }

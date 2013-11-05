@@ -2,7 +2,9 @@
  * ptst.h
  * 
  * Per-thread state management.
- * 
+ *
+ *
+ * Copyright (c) 2013, Jonatan Linden
  * Copyright (c) 2002-2003, K A Fraser
  */
 
@@ -19,14 +21,14 @@ struct ptst_st
 {
     /* Thread id */
     unsigned int id;
-
     /* State management */
     ptst_t      *next;
     unsigned int count;
-    unsigned int seed;
+
     /* Utility structures */
     gc_t        *gc;
-
+    char pad[56];
+    unsigned int seed;
 };
 
  /*

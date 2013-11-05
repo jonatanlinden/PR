@@ -30,6 +30,10 @@ head node, called "head"."""
         else:
             max_iter = self.MAX_ITER
 
+        if len(args) == 3:
+            lvl = int(args[2])
+        else:
+            lvl = 0
         
         p_node_t = gdb.lookup_type('node_t').pointer()
         long_t = gdb.lookup_type('long')

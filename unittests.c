@@ -5,9 +5,12 @@
 #include <limits.h>
 #include <assert.h>
 #include <pthread.h>
+#include <inttypes.h>
+#include <gsl/gsl_rng.h>
 
 #include "prioq.h"
 #include "gc.h"
+#include "common.h"
 
 static pq_t *pq;
 
@@ -20,6 +23,30 @@ pthread_t *ts;
 
 void *add_thread(void *id);
 void *removemin_thread(void *id);
+void *invariant_thread(void *id);
+
+node_t *stack[32];
+int stack_idx = 0;
+
+void
+push(node_t *n) 
+{
+    stack[stack_idx++] = n;
+}
+
+node_t *
+pop() 
+{
+    assert(stack_idx > 0);
+    return stack[--stack_idx];
+}
+
+node_t *
+peek()
+{
+    assert(stack_idx > 0);
+    return stack[stack_idx - 1];
+}
 
 
 int test_parallel_add() {
@@ -70,6 +97,94 @@ int test_parallel_del() {
     printf("OK.\n");
 }
 
+void
+check_invariants(pq_t *pq) 
+{
+    
+    node_t *cur, *pred;
+//    printf("checking invariants.\n");
+    
+    int cnt = 0;
+    
+    cur = pq->head->next[0];
+    while (is_marked_ref(cur)) {
+	pred = get_unmarked_ref(cur);
+	cur = pred->next[0];
+	cnt++;
+	
+    }
+    pred = cur;
+    cur = pred->next[0];
+//    printf("prefix: %d\n", cnt);
+    unsigned long long k = 0;
+    while (cur != pq->tail) {
+	assert(!is_marked_ref(cur));
+	assert(cur->k > k);
+	k = cur->k;
+	pred = cur;
+	cur = pred->next[0];
+	cnt++;
+    }
+//    printf("total live nodes: %d\n", cnt);
+    int highest_lvl = 32;
+    while(pq->head->next[--highest_lvl] == pq->tail) ;
+
+    
+    int curlvl = highest_lvl;
+    cur = get_unmarked_ref(pq->head->next[curlvl]);
+    while(cur != pq->tail) {
+	while(curlvl > 0)
+	    push (cur->next[curlvl--]);
+	cur = get_unmarked_ref(cur->next[0]);
+	while(curlvl < highest_lvl && cur == peek()) {
+	    pop();
+	    curlvl++;
+	}
+    }
+    if (curlvl != highest_lvl) {
+	printf("sdfh\n");
+	
+    }
+//    assert(curlvl == highest_lvl);
+
+}
+
+int halt = 0;
+int stop = 0;
+int abort_loop = 0;
+
+
+int test_invariants() {
+    for (long i = 0; i < nthreads * PER_THREAD; i++) {
+	insert(pq, i, (val_t)i);
+    }
+
+    for (long i = 0; i < nthreads; i ++)
+    {
+        pthread_create (&ts[i], NULL, invariant_thread, (void *)i);
+    }
+
+    for (int i = 0; i < 100; i++) {
+	usleep(100000);
+	halt = 1;
+	while(stop < nthreads) {
+	    IRMB();
+	}
+	check_invariants(pq);
+	stop = 0;
+	halt = 0;
+	IWMB();
+
+    }
+    abort_loop = 1;
+    
+    for (long i = 0; i < nthreads; i ++)
+    {
+	(void)pthread_join (ts[i], NULL);
+    }
+    
+}
+
 
 
 int setup (int max_offset) {
@@ -89,9 +204,10 @@ int main(int argc, char **argv) {
     ts = malloc(nthreads * sizeof(pthread_t));
     assert(ts);
 
+
     setup(10);
     
-    test_parallel_add();
+/*    test_parallel_add();
     
 
     teardown();
@@ -99,6 +215,8 @@ int main(int argc, char **argv) {
     setup(10);
     
     test_parallel_del();
+*/
+    test_invariants();
     
 
     teardown();
@@ -106,6 +224,38 @@ int main(int argc, char **argv) {
     
 
     return 0;
+}
+
+__thread gsl_rng *rng;
+
+
+
+void *
+invariant_thread(void *id) {
+    long base = PER_THREAD * (long)id;
+    uint64_t elem;
+    int cnt = 0;
+    
+
+    rng = gsl_rng_alloc(gsl_rng_mt19937);
+    gsl_rng_set(rng, (unsigned long)id); 
+
+    while(!abort_loop) {
+	if (halt) {
+	    __sync_fetch_and_add(&stop, 1);
+	    while(halt)
+		IRMB();
+	    
+	}
+	if (gsl_rng_uniform(rng) < 0.5) {
+	    elem = (uint64_t) gsl_rng_get(rng);
+	    insert(pq, elem, (void *)elem);
+	} else {
+	    deletemin(pq);
+	}
+	cnt++;
+    }
+    printf("%d %d\n", id, cnt);
 }
 
 

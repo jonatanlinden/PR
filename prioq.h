@@ -11,21 +11,21 @@ typedef void         *val_t;
 
 typedef struct node_s
 {
+    pkey_t    k;
     int       level;
-    val_t     v;
     int       inserting; //char pad2[4];
-    pkey_t     k;
+    val_t     v;
     struct node_s *next[1];
 } node_t;
 
 typedef struct
 {
-    int max_offset;
-    int max_level;
-    int nthreads;
+    int    max_offset;
+    int    max_level;
+    int    nthreads;
     node_t *head;
     node_t *tail;
-    char pad[64];
+    char   pad[128];
 } pq_t;
 
 
