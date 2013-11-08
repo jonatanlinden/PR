@@ -16,19 +16,19 @@ TARGS := prioq
 all: $(TARGETS)
 
 clean:
-	rm -f $(TARGETS) *~ core *.o *.a
+	rm -f $(TARGETS) *~ core *.o *.a gc/*.o
 
 
-$(TARGS): %: %.o set_harness.o ptst.o gc.o j_util.o
+$(TARGS): %: %.o set_harness.o gc/ptst.o gc/gc.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c $(COMMON_DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 unittests: CFLAGS += -O0 -g
-unittests: %: %.o prioq.o ptst.o gc.o j_util.o
+unittests: %: %.o prioq.o gc/ptst.o gc/gc.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-perf_meas: %: %.o prioq.o ptst.o gc.o
+perf_meas: %: %.o prioq.o gc/ptst.o gc/gc.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
