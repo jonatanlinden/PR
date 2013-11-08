@@ -21,46 +21,36 @@ head node, called "head"."""
     def __init__(self):
         super(SkiplistPrintCommand, self).__init__("skiplist-print", gdb.COMMAND_DATA, gdb.COMPLETE_SYMBOL)
 
-    def invoke(self, _args, from_tty): #stop_iter): #stop_key):
+    def invoke(self, _args, from_tty):
         args = gdb.string_to_argv(_args)
         start_node = args[0]
 
-        if len(args) == 2:
+        if len(args) > 1:
             max_iter = int(args[1])
         else:
             max_iter = self.MAX_ITER
 
-        if len(args) == 3:
+        if len(args) > 2:
             lvl = int(args[2])
         else:
             lvl = 0
         
         p_node_t = gdb.lookup_type('node_t').pointer()
         long_t = gdb.lookup_type('long')
-
-
-        head = gdb.parse_and_eval(start_node)
-
-        fnames = [ f.name for f in head.type.fields() ]
-
-        print fnames
-
-        # handle lists with a separate list type....
-
-        print "list@%s: %s" % (head.address, head)
-        print head.dereference()
-        node = head['next'].dereference()
-        node = gdb.Value(node).cast(long_t)
-        node = node & ~1
-        node = gdb.Value(node).cast(p_node_t).dereference()
+        node = gdb.parse_and_eval(start_node)
         print node
-        i = 1
-        while i < max_iter:
-            node = node['next'].dereference()
-            node = gdb.Value(node).cast(long_t)
-            node = node & ~1
-            node = gdb.Value(node).cast(p_node_t).dereference()
-            print node
-            i += 1
+
+        for i in xrange(max_iter):
+            nexts = node['next']
+            nxt = gdb.Value(nexts[lvl]).cast(long_t)
+            nxt = nxt & ~1
+            node = gdb.Value(nxt).cast(p_node_t).dereference()
+            nexts = node['next']
+            print node['k'], node['level'], node['inserting'],
+            k = 0
+            while k < node['level']:
+                print(nexts[k]),
+                k+=1
+            print("")
 
 SkiplistPrintCommand()
