@@ -1,38 +1,44 @@
 /*****
+ Time-stamp: <2013-11-08 10:30:07 jonatanlinden>
  * Verification of the linearizability of the priority queue algorithm
  * presented in the paper, and that the algorithm implements a priority
  * queue.
- *
+ * 
  * Some optimizations can be done, like reusing variables, replacing
  * the CAS macros, changing
  * some types from byte to bit (i.e. if limiting the number of levels
  * to two). We've omitted them here for the sake of clarity.
- *
+ * 
  * Adapted from Martin Vechev et al., Experience with Model Checking
  * Linearizability, 2009.
+ *
+ * 
  */
 
 #define IF if ::
 #define FI :: else fi
 
-#define CAS(a,o,n) \
-    cas_success = 0;   \
-    if :: (a == o) -> a = n; cas_success = 1; \
-       :: else fi
-
-#define CASD(a, d, o, n) \
+#define CAS(a, d, o, n) \
     cas_success = 0;     \
     if :: (d == 0 && a == o) -> a = n; cas_success = 1; \
     :: else fi
 
+#define FAO(a,v) \
+     a; a = v;
+
+#define WHILE do ::
+#define ELIHW :: else -> break; od
+
 #define GCASSERT(new, old) \
     assert(nodes[new].recycled == 0 || nodes[old].recycled);
 
-#define NLEVELS 2 /* 2 level skiplist */
-#define THREADS 2 /* 2 threads */
-#define NODES 11  /* total memory */
+#define NLEVELS 3 /* 3 level skiplist */
+#define THREADS 3 /* 2 threads */
+
 #define MAX_OPS 3 /* no. of random ops per thread */
 #define BOUNDOFFSET 2 /* restructure offset */
+
+#define NODES 15  /* total memory */
 
 /* Operation types. */
 #define INS   0
@@ -44,7 +50,7 @@
 
 typedef node_t {
   key_t key;
-  bit level;
+  byte level;
   bit inserting;
   bit recycled;
   /* the following 2 fields are colocated in one mem pos,
@@ -120,178 +126,151 @@ inline alloc_node(new, k)
  *******************************************************************/
 
 
+/* CAS(addr, d, old, new) - representing a CAS, that will update addr
+ * to new, given that addr = old and d = 0. d represents hence the
+ * delete bit being a part of old. */
+
 inline LocatePreds(key) {
-
-  d_step { /* local vars */
-    i = NLEVELS - 1;
-    pred = q.head;
-    obs_head = 0;
+  d_step { /* resetting some local vars */
+    cur = 0; pred = 0; d = 0; skew = 0;
+    i = NLEVELS; pred = q.head
   }
-  do :: /* while i >= 0 */
-	d_step { /* colocated together */
-	  cur = nodes[pred].next[i];
-	  d = nodes[pred].d;
-	}
-	do
-	  :: (nodes[cur].key < key || nodes[cur].d ||
-	      (i == 0 && d))  ->
-	     atomic {
-	       IF (i == 0/* FIX nlevels -1 */ && cur == succs[i+1]) ->
-		 obs_head = 1;
-	       FI;
-	       pred = cur; /* local */
-	      cur = nodes[pred].next[i]; /* colocated together */
-	      d = nodes[pred].d;
-	    }
-	 :: else -> break
-       od;
-       atomic { /* local vars */
-	 preds[i] = pred;
-	 succs[i] = cur;
-	 IF(i == 0) -> break FI;
-	 i = 0;
-       }
-  od;
+  /* NB: index i is offset by one in comparison to paper,
+   * due to lack of negative bytes in promela */
+  WHILE (i > 0) ->  /* for each level */
+    d_step { /* colocated together */
+      cur = nodes[pred].next[i-1];
+      d = nodes[pred].d
+    }
+    WHILE (nodes[cur].key < key || nodes[cur].d || (d && i == 1)) ->
+      atomic {
+        IF (i < NLEVELS && (cur == succs[i] || nodes[succs[i]].d)) ->
+          skew = 1
+        FI;
+	pred = cur; /* local */
+	/* colocated together */
+	cur = nodes[pred].next[i-1]; 
+	d = nodes[pred].d
+      }
+    ELIHW;
+    atomic { /* local vars */
+      preds[i-1] = pred;
+      succs[i-1] = cur;
+      i-- /* descend to next level */
+    }
+  ELIHW
 }
 
-inline Restructure() {
-  cur = nodes[q.head].next[i];
-  i = NLEVELS - 1;
-  do
-    :: (i == 0) -> break;
-    :: (i > 0) ->
-       h = nodes[q.head].next[i];
-       if :: (cur == q.tail) -> i--
-	  :: else ->
-	     do
-	       ::
-		  IF (!nodes[cur].d) -> break FI;
-		  cur = nodes[cur].next[i];
-	     od;
-	     atomic {
-	       CAS(nodes[q.head].next[i], h, cur);
-	       /* descend if CAS was successful, otherwise retry */
-	       IF (cas_success) ->
-		 GCASSERT(cur, q.head)
-		 i--
-	       FI;
-	     }
 
-       fi;
-  od;
-}
+inline Insert(key) {
+  alloc_node(new, key)
 
-/* Inserts key key in q */
-inline Insert(key)
-{
-  /* create node */
-  alloc_node(new, key);
-
-start:
-  /* search */
-  LocatePreds(key);
-
-  IF (nodes[succs[0]].key == key) -> goto end_insert FI;
-  
+retry:
+  LocatePreds(key)
+  /* bail out if key already exists */
+  IF (nodes[succs[0]].key == key && !nodes[preds[0]].d
+      && nodes[preds[0]].next[0] == succs[0]) -> goto end_insert FI;
   nodes[new].next[0] = succs[0];
-
-  /* swing pred pointer, if not cur is deleted */
-  atomic { /*cas */ /* linearization point of non-failed insert */
-    CASD(nodes[preds[0]].next[0], nodes[preds[0]].d, succs[0], new);
-
+  /* Lowest level */
+  atomic { /* linearization point of non-failed insert */
+    CAS(nodes[preds[0]].next[0], nodes[preds[0]].d, succs[0], new);
     if :: (cas_success) ->
-	  seq_add(new, key);
-	  GCASSERT(succs[0], new);
-       :: else -> goto start; /* restart */
-    fi;
+	  seq_add(new, key)
+	  GCASSERT(succs[0], new)
+       :: else -> goto retry /* restart */
+    fi
   }
-
-  IF ((nodes[new].level == 0) || obs_head) -> goto end_insert FI;
-
   /* swing upper levels */
-  j = 1;
-  do :: (j == NLEVELS) -> break;
-     :: (j < NLEVELS) -> 
-	nodes[new].next[j] = succs[j];
-	IF (nodes[new].d) -> goto end_insert FI;
-	atomic { /*cas */
-	  CAS(nodes[preds[j]].next[j], succs[j], new);
-	  /* FIX only assert if successful */
-	  IF (cas_success) ->
-	    GCASSERT(succs[j], new)
-	    j++
-	  FI;
-	}
-	IF (!cas_success) ->
-	  LocatePreds(key) /* update preds and succs */
-	  /*IF (obs_head || nodes[succs[0]].key != key) -> goto end_insert FI;*/
-	  /* something has changed, abort */
-	  IF (obs_head || succs[0] != new) -> goto end_insert FI;
-	  nodes[new].next[j] = succs[j]
-	FI
-  od;
-
-  /* we're done */
-  goto end_insert;
-
+  j = 1; /* i is being used in locatepreds */
+  WHILE (j <= nodes[new].level && !skew) -> 
+    nodes[new].next[j] = succs[j];
+    IF (nodes[new].d) -> goto end_insert FI;
+    atomic {
+      CAS(nodes[preds[j]].next[j], 0, succs[j], new);
+      IF (cas_success) ->
+	GCASSERT(succs[j], new)
+	j++
+      FI
+    }
+    IF (!cas_success) ->
+      LocatePreds(key) /* update preds and succs */
+      IF (succs[0] != new) -> goto end_insert FI
+      /* new is deleted, we're done */
+    FI
+  ELIHW;
 end_insert:
   nodes[new].inserting = 0
 }
 
-/* Delete smallest element in queue */
-inline DeleteMin ()
-{
 
+inline Restructure() {
+  i = NLEVELS - 1; pred = q.head;
+re_continue: 
+    WHILE (i > 0) ->
+       h = nodes[q.head].next[i];
+       cur = nodes[pred].next[i];
+       IF (!nodes[h].d) -> i--; goto re_continue FI;
+       WHILE (nodes[cur].d) ->
+         pred = cur;
+         cur = nodes[pred].next[i]
+       ELIHW;
+       atomic {
+	 CAS(nodes[q.head].next[i], 0, h, nodes[pred].next[i]);
+	 IF (cas_success) ->
+	   GCASSERT(nodes[pred].next[i], q.head)
+	   i--
+	 FI
+       }
+  ELIHW
+}
+
+inline DeleteMin () {
+  /* offset = 0 is implicit */
   d_step {
-    pred = q.head;
-    obs_head = nodes[pred].next[0];
+    d = 1; x = q.head;
+    obs_head = nodes[x].next[0]
   }  
-  /* walk at bottom level */
-  do ::
-	atomic {
-	  cur = nodes[pred].next[0];
-	  d   = nodes[pred].d;
-	  IF (cur == q.tail) -> /* gets linearized when reading cur */
-	    /* implies del bit not set */
-	    seq_empty();
-	    goto end_remove;
-	  FI;
-	}
-	atomic {
-	  IF (newhead == NODES && nodes[cur].inserting) -> newhead = cur;
-	  FI; /* inside atomic, since only local */
-	  /* del stored in preds next pointer */
-	  CAS(nodes[pred].d, 0, 1);
-	  if :: (cas_success) ->
-		key = nodes[nodes[pred].next[0]].key;
-		seq_remove(key);
-		break;
-	     :: else ->
-		/* new pred is returned atomically by cas */
-		pred = nodes[pred].next[0];
-		offset ++;
-	  fi;
-	}
-  od;
-  IF (newhead == NODES) -> newhead = nodes[pred].next[0];
-  FI;
-  IF (offset >= BOUNDOFFSET) ->
-    atomic {  /* the delete bits are both already set, only update pointer */
-      CAS(nodes[q.head].next[0],obs_head,newhead);
-      if :: (cas_success) -> GCASSERT(newhead, q.head)
-	 :: else -> goto end_remove
-      fi;
+  WHILE (d) ->
+    atomic {
+      offset ++;
+      /* nxt & d colocated */
+      nxt = nodes[x].next[0];
+      d   = nodes[x].d;
+      IF (nxt == q.tail) ->
+        /* empty: got linearized when reading nxt */
+        seq_empty()
+        goto end_remove
+      FI
     }
-    Restructure();
-    do
-      :: cur = obs_head;
-	 IF (cur == newhead) -> break FI;
-	 nodes[obs_head].recycled = 1;
-	 obs_head = nodes[cur].next[0];
-    od;
-  FI;
-  goto end_remove;
-
+    IF (nodes[x].inserting && newhead == NODES) ->
+      newhead = x
+    FI;
+    atomic {
+      /* linearization point */
+      d = FAO(nodes[x].d, 1)
+      IF (!d) ->
+	/* check linearization */
+	key = nodes[nodes[x].next[0]].key;
+	seq_remove(key)
+      FI
+    }
+    x = nodes[x].next[0]
+  ELIHW;
+  IF (offset <= BOUNDOFFSET) -> goto end_remove FI;
+  IF (newhead == NODES) -> newhead = x FI;
+  atomic {
+    CAS(nodes[q.head].next[0], 0, obs_head,newhead);
+    if :: (cas_success) -> GCASSERT(newhead, q.head)
+       :: else -> goto end_remove
+    fi
+  }
+  Restructure()
+  cur = obs_head;
+  WHILE (cur != newhead) ->
+       nxt = nodes[cur].next[0];
+       nodes[cur].recycled = 1; /* MarkRecycle */
+       cur = nxt
+  ELIHW;
 end_remove:
 }
 
@@ -303,7 +282,7 @@ end_remove:
 /* random key generator.  */
 inline pick_key(var) { 
   atomic {
-  select(var : 1..5);
+    select(var : 1..5);
   }
 }
 
@@ -352,24 +331,28 @@ inline init_locals()
     preds[1] = 0;
     succs[0] = 0;
     succs[1] = 0;
+    op = 0;
     offset = 0;
     obs_head = 0;
+    skew = 0;
     cas_success = 0;
     h = 0;
     i = 0;
     j = 0;
     new = 0;
     key = 0;
+    x = 0;
+    nxt = 0;
     newhead = NODES;
   }
 }
 
 inline define_locals()
 {
-  idx_t pred, cur, obs_head, offset, newhead, h;
+  idx_t pred, cur, obs_head, offset, newhead, h, x, nxt;
   idx_t preds[NLEVELS], succs[NLEVELS];
   byte i,j;
-  bit op, d, cas_success;
+  bit op, d, cas_success, skew;
   byte key;
   
   idx_t new;
@@ -418,5 +401,13 @@ for ( _dummy0 : 1..(THREADS - 1)) {
 
   /* wait until the other process finishes. */
   _nr_pr == 1;
-
+  i = nodes[q.head].next[0];
+  printf("h, %d -> ", nodes[q.head].d);
+  do :: (i != q.tail) ->
+	printf("%d,%d ->", nodes[i].key, nodes[i].d);
+	i = nodes[i].next[0];
+     :: else -> break;
+  od;
+  printf("t\n");
 }
+
