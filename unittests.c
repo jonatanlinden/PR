@@ -8,8 +8,9 @@
 #include <inttypes.h>
 #include <gsl/gsl_rng.h>
 
+#include "gc/gc.h"
+
 #include "prioq.h"
-#include "gc.h"
 #include "common.h"
 
 static pq_t *pq;
@@ -102,9 +103,10 @@ check_invariants(pq_t *pq)
 {
     
     node_t *cur, *pred;
-//    printf("checking invariants.\n");
-    
-    int cnt = 0;
+    int curlvl, cnt = 0;
+    int highest_lvl = 32;
+    unsigned long long k = 0;
+
     
     cur = pq->head->next[0];
     while (is_marked_ref(cur)) {
@@ -115,8 +117,7 @@ check_invariants(pq_t *pq)
     }
     pred = cur;
     cur = pred->next[0];
-//    printf("prefix: %d\n", cnt);
-    unsigned long long k = 0;
+
     while (cur != pq->tail) {
 	assert(!is_marked_ref(cur));
 	assert(cur->k > k);
@@ -125,12 +126,11 @@ check_invariants(pq_t *pq)
 	cur = pred->next[0];
 	cnt++;
     }
-//    printf("total live nodes: %d\n", cnt);
-    int highest_lvl = 32;
-    while(pq->head->next[--highest_lvl] == pq->tail) ;
 
+    /* Find first level with hp not pointing at tail. */
+    while(pq->head->next[--highest_lvl] == pq->tail) ;
     
-    int curlvl = highest_lvl;
+    curlvl = highest_lvl;
     cur = get_unmarked_ref(pq->head->next[curlvl]);
     while(cur != pq->tail) {
 	while(curlvl > 0)
@@ -142,12 +142,10 @@ check_invariants(pq_t *pq)
 	}
     }
     if (curlvl != highest_lvl) {
-	printf("sdfh\n");
-	
+	printf("c: %d h: %d\n", curlvl, highest_lvl);
     }
-//    assert(curlvl == highest_lvl);
-
 }
+
 
 int halt = 0;
 int stop = 0;
@@ -164,8 +162,8 @@ int test_invariants() {
         pthread_create (&ts[i], NULL, invariant_thread, (void *)i);
     }
 
-    for (int i = 0; i < 100; i++) {
-	usleep(100000);
+    for (int i = 0; i < 200; i++) {
+	usleep(50000);
 	halt = 1;
 	while(stop < nthreads) {
 	    IRMB();

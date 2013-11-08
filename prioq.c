@@ -48,9 +48,11 @@
 #include <inttypes.h>
 #include <gsl/gsl_randist.h>
 
+#include "gc/ptst.h"
+
 #include "common.h"
 #include "prioq.h"
-#include "ptst.h"
+
 
 /* The thread state. */
 __thread ptst_t *ptst;
@@ -66,8 +68,9 @@ alloc_node(pq_t *q)
 {
     node_t *n;
     int level = 1;
-    int r = ptst->seed;
-    ptst->seed = r * 134775813 + 1;
+    int r = ptst->rand;
+    ptst->rand = r * 1103515245 + 12345;
+
     if (r < 0) {
 	while ((r <<= 1) > 0)
 	    ++level;
@@ -161,7 +164,7 @@ void
 insert(pq_t *pq, pkey_t k, val_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
-    node_t *new = NULL;
+    node_t *new = NULL, *h = NULL;
     int skew = 0;
 
     critical_enter();
@@ -197,14 +200,17 @@ retry:
     while ( i < new->level && !skew)
     {
         /* optimization (?) */
-	IRMB(); 
-	
+	IRMB();
+
+	// make skiplist conform more strictly to the skiplist property
+	if (preds[i] == pq->head && ((node_t *) get_unmarked_ref(pq->head->next[i-1]))->k > k) 
+	    goto success;
+
 	/* if successor of new is deleted, we're done */
 	if (is_marked_ref(new->next[0])) goto success;
 
 	/* prepare next pointer of new node */
 	new->next[i] = succs[i];
-	
         if (!__sync_bool_compare_and_swap(&preds[i]->next[i], succs[i], new))
         {
 	    /* failed due to competing insert or restruct */
@@ -215,10 +221,6 @@ retry:
 	    
         } else {
 	    /* Succeeded at this level. */
-	    if (i > 1 && (new->next[i]->k < new->next[i-1]->k) && !is_marked_ref(preds[0]->next[0]) && !is_marked_ref(new->next[0]))
-		printf("bug");
-	    
-	    
 	    i++;
 
 	}
@@ -275,8 +277,10 @@ restructure(pq_t *pq)
 	    pred = cur;
 	    cur = pred->next[i];
 	}
+	assert(is_marked_ref(pred->next[0]));
+	
 	/* swing head pointer */
-	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,pred->next[i]))
+	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,cur))
 	    i--;
     }
 }
@@ -321,8 +325,9 @@ deletemin(pq_t *pq)
 	    goto out;
 	}
 
-	// Do not allow head to point past a node currently being
-	// inserted.
+	/* Do not allow head to point past a node currently being
+	 * inserted. This makes the lock-freedom quite a theoretic
+	 * matter. */
 	if (newhead == NULL && x->inserting) newhead = x;
 
 	/* optimization */

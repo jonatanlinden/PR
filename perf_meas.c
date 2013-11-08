@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-04 11:34:20 jonatanlinden>
+ * Time-stamp: <2013-11-08 09:49:42 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -21,16 +21,15 @@
 #include <sys/syscall.h>
 #include <math.h>
 
+#include "gc/gc.h"
+
 #include "common.h"
 #include "prioq.h"
-#include "gc.h"
-
-
 
 #define DEFAULT_GCYCLES 10
 #define DEFAULT_NTHREADS 1
 #define DEFAULT_OFFSET 64
-
+#define EXPS 100000000
 
 #define PIN
 
@@ -49,6 +48,20 @@ pin(pid_t t, int cpu)
     CPU_SET(cpu, &cpuset);
     E_en(sched_setaffinity(t, sizeof(cpu_set_t), &cpuset));
 }
+
+
+void
+gen_exps(unsigned long *arr, gsl_rng *rng, int len, int intens)
+{
+    int i = 0;
+    arr[0] = 2;
+    while (i + 1 < len) {
+	arr[i+1] = arr[i] + (unsigned long)ceil(gsl_ran_exponential (rng, intens));//dists[gsl_rng_uniform_int(rng[0], 4)]));
+       i++;
+    }
+}
+unsigned long *exps;
+int exps_pos = 0;
 
 
 
@@ -96,17 +109,18 @@ main (int argc, char **argv)
     
     extern char *optarg;
     extern int optind, optopt;
-    int nthreads = DEFAULT_NTHREADS;
-    int offset = DEFAULT_OFFSET;
-    int gcycles = DEFAULT_GCYCLES;
-
-    int initial_size = 1<<15;
+    int nthreads	= DEFAULT_NTHREADS;
+    int offset		= DEFAULT_OFFSET;
+    int gcycles		= DEFAULT_GCYCLES;
+    int exp		= 0;
+    int initial_size	= 1<<15;
     
-    while ((opt = getopt(argc, argv, "t:n:o:h")) >= 0) {
+    while ((opt = getopt(argc, argv, "t:n:o:he")) >= 0) {
 	switch (opt) {
 	case 'n': nthreads = atoi(optarg); break;
 	case 't': gcycles  = atoi(optarg); break;
 	case 'o': offset   = atoi(optarg); break;
+	case 'e': exp      = 1; break;
 	case 'h': usage(stdout, argv[0]); exit(EXIT_SUCCESS); break;
 	}
     }
@@ -119,10 +133,23 @@ main (int argc, char **argv)
     _init_gc_subsystem();
     pq = pq_init(offset);
 
+
+    if (exp) {
+	exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS);
+	gen_exps(exps, rng, EXPS, 1000);
+    }
+    
+
+
     uint64_t elem;
     for (int i = 0; i < initial_size; i++) {
+	if (exp) {
+	    elem = exps[exps_pos++];
+	    insert(pq, elem, (void *)elem);
+	} else {
 	elem = (uint64_t) gsl_rng_get(rng);
 	insert(pq, elem, (void *)elem);
+	}
     }
 
 
@@ -135,7 +162,6 @@ main (int argc, char **argv)
     IWMB();
     
     start = 1;
-    
     
     /* JOIN them */
     for (int i = 0; i < nthreads; i++)
@@ -173,10 +199,12 @@ work (pq_t *pq)
 inline int __attribute__((always_inline))
 work_exp (pq_t *pq)  
 {
+    int pos;
     uint64_t elem;
     uint64_t old = deletemin(pq);
-    elem = old + (unsigned long)ceil(gsl_ran_exponential(rng, 10000));
-    
+    pos = __sync_fetch_and_add(&exps_pos, 1);
+//    elem = old + (unsigned long)ceil(gsl_ran_exponential(rng, 10000));
+    elem = exps[pos];
     insert(pq, elem, (void *)elem);
 
     return 1;
@@ -203,7 +231,7 @@ run (void *_args)
     
     do {
         /* BEGIN work */
-	work(pq);
+	work_exp(pq);
         cnt++;
 	/* END work */
     } while (NOW() < end);
