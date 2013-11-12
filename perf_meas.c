@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-12 13:04:21 jonatanlinden>
+ * Time-stamp: <2013-11-12 13:14:17 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -54,7 +54,7 @@ void (* work)(pq_t *pq);
 thread_args_t *ts;
 pq_t *pq;
 
-volatile int wait  = 0;
+volatile int wait_barrier  = 0;
 volatile int loop  = 0;
 
 
@@ -152,7 +152,7 @@ main (int argc, char **argv)
     /* RUN BENCHMARK */
 
     /* wait for all threads to call in */
-    while (wait != nthreads) ;
+    while (wait_barrier != nthreads) ;
     IRMB();
     gettime(&start);
     loop = 1;
@@ -241,7 +241,7 @@ run (void *_args)
 #endif
 
     // call in to main thread
-    __sync_fetch_and_add(&wait, 1);
+    __sync_fetch_and_add(&wait_barrier, 1);
 
     // wait until signaled by main thread
     while (!loop);
