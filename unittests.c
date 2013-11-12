@@ -231,7 +231,6 @@ __thread gsl_rng *rng;
 void *
 invariant_thread(void *_args) {
     unsigned long id = (unsigned long)_args;
-    long base = PER_THREAD * id;
     uint64_t elem;
     int cnt = 0;
     
@@ -263,12 +262,8 @@ invariant_thread(void *_args) {
 void *
 add_thread(void *id) {
     long base = PER_THREAD * (long)id;
-    int x;
-    for(int i = 0; i < PER_THREAD; i++) {
-	x = base + i;
+    for(int i = 0; i < PER_THREAD; i++)
 	insert(pq, base+i, (val_t) base+i);
-	
-    }
     return NULL;
 }
 

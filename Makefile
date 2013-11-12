@@ -1,6 +1,6 @@
 DEBUGGING := -g -O0
-CC	:= gcc -std=c99
-CFLAGS	:= -O3 -DINTEL 
+CC	:= gcc 
+CFLAGS	:= -O3 -DINTEL -Wall -std=c99
 LDFLAGS	:= -lpthread `pkg-config --libs glib-2.0 gsl`
 
 #CFLAGS      += $(DEBUGGING)

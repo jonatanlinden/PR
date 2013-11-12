@@ -68,7 +68,7 @@ alloc_node(pq_t *q)
     int level = 1;
     unsigned int r = ptst->rand;
     ptst->rand = r * 1103515245 + 12345;
-    r &= ((1u << NUM_LEVELS-1)) - 1;
+    r &= (1u << (NUM_LEVELS - 1)) - 1;
     
     while ((r >>= 1) & 1)
 	++level;
@@ -161,7 +161,7 @@ void
 insert(pq_t *pq, pkey_t k, val_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
-    node_t *new = NULL, *h = NULL;
+    node_t *new = NULL;
     int skew = 0;
 
     assert(SENTINEL_KEYMIN < k && k < SENTINEL_KEYMAX);
@@ -291,7 +291,6 @@ deletemin(pq_t *pq)
 {
     val_t   v = NULL;
     pkey_t   k = 0;
-    node_t *preds[NUM_LEVELS];
     node_t *x, *nxt, *obs_head = NULL, *newhead, *cur;
     int offset, lvl;
     

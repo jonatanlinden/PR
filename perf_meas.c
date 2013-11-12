@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-12 13:31:51 jonatanlinden>
+ * Time-stamp: <2013-11-12 14:13:41 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -170,9 +170,7 @@ main (int argc, char **argv)
 	pthread_join(t->thread, NULL);
     }
 
-
     /* PRINT PERF. MEASURES */
-
     int sum = 0, min = INT_MAX, max =0;
 
     THREAD_ARGS_FOREACH(t) {
@@ -221,7 +219,7 @@ work_exp (pq_t *pq)
 {
     int pos;
     unsigned long elem;
-    unsigned long old = deletemin(pq);
+    deletemin(pq);
     pos = __sync_fetch_and_add(&exps_pos, 1);
     elem = exps[pos];
     insert(pq, elem, (void *)elem);
@@ -233,6 +231,7 @@ run (void *_args)
 {
     args = (thread_args_t *)_args;
     int cnt = 0;
+
 
 #if defined(PIN) && defined(__linux__)
     /* Straight allocation on 32 core machine.
