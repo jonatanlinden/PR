@@ -3,7 +3,6 @@
 #define _GNU_SOURCE
 #include <inttypes.h>
 #include <unistd.h>
-#include <time.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -11,6 +10,18 @@
 #include <string.h>
 #include <pthread.h>
 #include <gsl/gsl_rng.h>
+
+#if defined(__linux__)
+#include <time.h>
+#include <sched.h>
+#include <sys/syscall.h>
+#endif
+
+#if defined(__APPLE__)
+#include <mach/mach_time.h>
+#endif
+
+
 
 #define DCL_ALIGN __attribute__((aligned (2*CACHE_LINE_SIZE)))
 #define CACHELINE  __attribute__((aligned (1*CACHE_LINE_SIZE)))
@@ -95,7 +106,14 @@ extern pid_t gettid(void);
 extern void  pin(pid_t t, int cpu);
 #endif
 
-extern void gettime(struct timespec *);
+#if defined(__APPLE__)
+struct timespec {
+    long tv_sec;
+    long tv_nsec;
+}
+#endif
+
+extern void gettime(struct timespec *t);
 extern struct timespec timediff(struct timespec, struct timespec);
 
 #endif 

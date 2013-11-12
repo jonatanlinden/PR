@@ -4,15 +4,6 @@
 
 #include "common.h"
 
-#if defined(__linux__)
-#include <time.h>
-#include <sched.h>
-#include <sys/syscall.h>
-#endif
-
-#if defined(__APPLE__)
-#include <mach/mach_time.h>
-#endif
 
 
 #if defined(__linux__)
