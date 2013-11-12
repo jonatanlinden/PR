@@ -89,9 +89,14 @@ read_tsc_p()
 #error Unsupported architecture
 #endif // __x86_64__
 
+
+#if defined(__linux__)
 extern pid_t gettid(void);
 extern void  pin(pid_t t, int cpu);
-extern struct timespec timediff(struct timespec begin, struct timespec end);
+#endif
 
+extern void gettime(struct timespec *);
+extern struct timespec timediff(struct timespec, struct timespec);
 
 #endif 
+

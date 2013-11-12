@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-12 11:31:44 jonatanlinden>
+ * Time-stamp: <2013-11-12 13:04:21 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -154,7 +154,7 @@ main (int argc, char **argv)
     /* wait for all threads to call in */
     while (wait != nthreads) ;
     IRMB();
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    gettime(&start);
     loop = 1;
     IWMB();
     /* Process might sleep longer than specified,
@@ -162,7 +162,7 @@ main (int argc, char **argv)
     usleep( 1000000 * secs );
     loop = 0; /* halt all threads */
     IWMB();
-    clock_gettime(CLOCK_MONOTONIC, &end);
+    gettime(&end);
 
     /* END RUN BENCHMARK */
 
