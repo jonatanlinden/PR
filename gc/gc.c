@@ -176,7 +176,7 @@ struct gc_st
 
 #define MEM_FAIL(_s)                                                         \
 do {                                                                         \
-    fprintf(stderr, "OUT OF MEMORY: %lu bytes at line %d\n", (_s), __LINE__); \
+    fprintf(stderr, "OUT OF MEMORY: %d bytes at line %d\n", (_s), __LINE__); \
     exit(1);                                                                 \
 } while ( 0 )
 

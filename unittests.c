@@ -50,7 +50,7 @@ peek()
 }
 
 
-int test_parallel_add() {
+void test_parallel_add() {
 
     printf("test parallel add, %d threads\n", nthreads);
 
@@ -75,7 +75,7 @@ int test_parallel_add() {
 }
 
 
-int test_parallel_del() {
+void test_parallel_del() {
 
     printf("test parallel del, %d threads\n", nthreads);
 
@@ -152,7 +152,7 @@ int stop = 0;
 int abort_loop = 0;
 
 
-int test_invariants() {
+void test_invariants() {
     for (long i = 0; i < nthreads * PER_THREAD; i++) {
 	insert(pq, i, (val_t)i);
     }
@@ -185,12 +185,12 @@ int test_invariants() {
 
 
 
-int setup (int max_offset) {
+void setup (int max_offset) {
     _init_gc_subsystem();
     pq = pq_init(max_offset);
 }
 
-int teardown () {
+void teardown () {
     _destroy_gc_subsystem();
     free(pq);
     
