@@ -1,35 +1,31 @@
-DEBUGGING := -g -O0
 CC	:= gcc 
 CFLAGS	:= -O3 -DINTEL -Wall -std=c99
 LDFLAGS	:= -lpthread `pkg-config --libs glib-2.0 gsl`
 
-#CFLAGS      += $(DEBUGGING)
-#CFLAGS       += -DNDEBUG
-
 OS	:= $(shell uname -s)
     ifeq ($(OS),Linux)
-	CFLAGS += -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
+	CFLAGS  += -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
         LDFLAGS += -lrt
     endif
     ifeq ($(OS),Darwin)
 	CFLAGS += -DCACHE_LINE_SIZE=`sysctl -n hw.cachelinesize`
     endif
 
-OBJ_DIR = obj
-objs:=$(patsubst %.c,$(OBJ_DIR)/%.o,$(wildcard *.c))
 
-COMMON_DEPS += Makefile $(wildcard *.h)
+VPATH	:= gc
+DEPS	+= Makefile $(wildcard *.h) $(wildcard gc/*.h)
+TARGETS := perf_meas unittests
 
-TARGETS    := perf_meas unittests
-
-all: $(TARGETS)
+all: 	$(TARGETS)
 
 clean:
-	rm -f $(TARGETS) *~ core *.o *.a gc/*.o
+	rm -f $(TARGETS) core *.o 
 
-%.o: %.c $(COMMON_DEPS)
+%.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TARGETS): %: %.o prioq.o gc/ptst.o gc/gc.o common.o
+$(TARGETS): %: %.o ptst.o gc.o prioq.o common.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
+
+.PHONY: all clean
