@@ -1,9 +1,13 @@
+#ifndef PRIOQ_H
+#define PRIOQ_H
+
+#include "common.h"
+
 typedef unsigned long pkey_t;
+typedef void          *val_t;
+
 #define KEY_NULL 0
-typedef void         *val_t;
-
 #define NUM_LEVELS 32
-
 /* Internal key values with special meanings. */
 #define SENTINEL_KEYMIN ( 0UL) /* Key value of first dummy node. */
 #define SENTINEL_KEYMAX (~1UL) /* Key value of last dummy node.  */
@@ -28,6 +32,10 @@ typedef struct
     char   pad[128];
 } pq_t;
 
+#define get_marked_ref(_p)      ((void *)(((uintptr_t)(_p)) | 1))
+#define get_unmarked_ref(_p)    ((void *)(((uintptr_t)(_p)) & ~1))
+#define is_marked_ref(_p)       (((uintptr_t)(_p)) & 1)
+
 
 /* Interface */
 
@@ -41,5 +49,4 @@ extern pkey_t deletemin(pq_t *pq);
 
 extern void sequential_length(pq_t *pq);
 
-
-
+#endif // PRIOQ_H

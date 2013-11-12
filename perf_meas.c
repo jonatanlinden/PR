@@ -3,101 +3,82 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-08 09:49:42 jonatanlinden>
+ * Time-stamp: <2013-11-12 11:31:44 jonatanlinden>
  */
 
 #define _GNU_SOURCE
 #include <unistd.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <inttypes.h>
 #include <pthread.h>
-#include <sys/time.h>
+#include <time.h>
 #include <assert.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
-#include <sched.h>
-#include <sys/syscall.h>
-#include <math.h>
+
+
+#include <limits.h>
 
 #include "gc/gc.h"
 
 #include "common.h"
 #include "prioq.h"
 
-#define DEFAULT_GCYCLES 10
-#define DEFAULT_NTHREADS 1
-#define DEFAULT_OFFSET 64
-#define EXPS 100000000
-
+/* check your cpu core numbering before pinning */
 #define PIN
 
-pid_t 
-gettid(void) 
-{
-    return (pid_t) syscall(SYS_gettid);
-}
+#define DEFAULT_SECS 10
+#define DEFAULT_NTHREADS 1
+#define DEFAULT_OFFSET 32
+#define DEFAULT_SIZE 1<<15
+#define EXPS 100000000
+
+#define THREAD_ARGS_FOREACH(_iter) \
+    for (int i = 0; i < nthreads && (_iter = &ts[i]); i++)
 
 
-void
-pin(pid_t t, int cpu) 
-{
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(cpu, &cpuset);
-    E_en(sched_setaffinity(t, sizeof(cpu_set_t), &cpuset));
-}
-
-
-void
-gen_exps(unsigned long *arr, gsl_rng *rng, int len, int intens)
-{
-    int i = 0;
-    arr[0] = 2;
-    while (i + 1 < len) {
-	arr[i+1] = arr[i] + (unsigned long)ceil(gsl_ran_exponential (rng, intens));//dists[gsl_rng_uniform_int(rng[0], 4)]));
-       i++;
-    }
-}
+/* preload array with exponentially distanced integers for the
+ * DES workload */
 unsigned long *exps;
 int exps_pos = 0;
+void gen_exps(unsigned long *arr, gsl_rng *rng, int len, int intensity);
 
-
+/* the workloads */
+void work_exp (pq_t *pq);
+void work_uni (pq_t *pq);
 
 void *run (void *_args);
 
-pthread_t *ts;
 
+void (* work)(pq_t *pq);
+thread_args_t *ts;
 pq_t *pq;
 
-volatile int start = 0;
+volatile int wait  = 0;
+volatile int loop  = 0;
 
-
-/* global timestamp deciding when all threads should stop */
-uint64_t end = 0;
-/* global total measure */
-unsigned long measure = 0;
-
-
-#define NOW() read_tsc_p()
 
 static void
 usage(FILE *out, const char *argv0)
 {
     fprintf(out, "Usage: %s [OPTION]...\n"
-                        "\n"
+	    "\n"
 	    "Options:\n", argv0);
 
     fprintf(out, "\t-h\t\tDisplay usage.\n");
-    fprintf(out, "\t-t GCYCLES\tRun for GCYCLES billion cycles. "
+    fprintf(out, "\t-t SECS\t\tRun for SECS seconds. "
 	    "Default: %i\n",
-	    DEFAULT_GCYCLES);
-    fprintf(out, "\t-o OFFSET\tUse an offset of OFFSET nodes. Sensible values"           " \n\t\t\tcould be 64 for 8 threads, 200 for 32 threads. "
+	    DEFAULT_SECS);
+    fprintf(out, "\t-o OFFSET\tUse an offset of OFFSET nodes. Sensible "
+	    "\n\t\t\tvalues could be 16 for 8 threads, 128 for 32 threads. "
 	    "\n\t\t\tDefault: %i\n",
 	    DEFAULT_OFFSET);
-    fprintf(out, "\t-n NUM\t\tUse NUM threads. Default: %i\n",
-		DEFAULT_NTHREADS);
+    fprintf(out, "\t-n NUM\t\tUse NUM threads. "
+	    "Default: %i\n",
+	    DEFAULT_NTHREADS);
+    fprintf(out, "\t-s SIZE\t\tInitialize queue with SIZE elements. "
+	    "Default: %i\n",
+	    DEFAULT_SIZE);
 }
 
 
@@ -106,71 +87,111 @@ main (int argc, char **argv)
 {
     int opt;
     gsl_rng *rng;
+    struct timespec start, end;
+    thread_args_t *t;
+    unsigned long elem;
     
     extern char *optarg;
     extern int optind, optopt;
     int nthreads	= DEFAULT_NTHREADS;
     int offset		= DEFAULT_OFFSET;
-    int gcycles		= DEFAULT_GCYCLES;
+    int secs		= DEFAULT_SECS;
     int exp		= 0;
-    int initial_size	= 1<<15;
+    int init_size	= DEFAULT_SIZE;
+    work		= work_uni;
     
-    while ((opt = getopt(argc, argv, "t:n:o:he")) >= 0) {
+    while ((opt = getopt(argc, argv, "t:n:o:s:he")) >= 0) {
 	switch (opt) {
-	case 'n': nthreads = atoi(optarg); break;
-	case 't': gcycles  = atoi(optarg); break;
-	case 'o': offset   = atoi(optarg); break;
-	case 'e': exp      = 1; break;
+	case 'n': nthreads	= atoi(optarg); break;
+	case 't': secs		= atoi(optarg); break;
+	case 'o': offset	= atoi(optarg); break;
+	case 's': init_size	= atoi(optarg); break;
+	case 'e': exp		= 1; work = work_exp; break;
 	case 'h': usage(stdout, argv[0]); exit(EXIT_SUCCESS); break;
 	}
     }
 
-    ts = malloc(nthreads*sizeof(pthread_t));
+#ifndef PIN
+    printf("Running without threads pinned to cores.\n");
+#endif
 
-    rng = gsl_rng_alloc(gsl_rng_mt19937);
+    E_NULL(ts = malloc(nthreads*sizeof(thread_args_t)));
+    memset(ts, 0, nthreads*sizeof(thread_args_t));
+
+    E_NULL(rng = gsl_rng_alloc(gsl_rng_mt19937));
     gsl_rng_set(rng, time(NULL));
 
     _init_gc_subsystem();
     pq = pq_init(offset);
 
-
     if (exp) {
-	exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS);
+	E_NULL(exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS));
 	gen_exps(exps, rng, EXPS, 1000);
     }
     
-
-
-    uint64_t elem;
-    for (int i = 0; i < initial_size; i++) {
+    /* pre-fill priority queue with elements */
+    for (int i = 0; i < init_size; i++) {
 	if (exp) {
 	    elem = exps[exps_pos++];
 	    insert(pq, elem, (void *)elem);
 	} else {
-	elem = (uint64_t) gsl_rng_get(rng);
-	insert(pq, elem, (void *)elem);
+	    elem =  (unsigned long) gsl_rng_get(rng);
+	    insert(pq, elem, (void *)elem);
 	}
     }
 
 
-    /* RUN the workloads */
-    for (long i = 0; i < nthreads; i++) {
-	pthread_create(&ts[i], NULL, run, (void *)i);
+   /* initialize threads */
+    THREAD_ARGS_FOREACH(t) {
+	t->id = i;
+	E_NULL(t->rng = gsl_rng_alloc(gsl_rng_mt19937));
+	gsl_rng_set(t->rng, read_tsc_p());
+	E_en(pthread_create(&t->thread, NULL, run, t));
     }
 
-    end = gcycles * 1000000000UL + NOW();
+    /* RUN BENCHMARK */
+
+    /* wait for all threads to call in */
+    while (wait != nthreads) ;
+    IRMB();
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    loop = 1;
     IWMB();
-    
-    start = 1;
-    
-    /* JOIN them */
-    for (int i = 0; i < nthreads; i++)
-	pthread_join(ts[i], NULL);
+    /* Process might sleep longer than specified,
+     * but this will be accounted for. */
+    usleep( 1000000 * secs );
+    loop = 0; /* halt all threads */
+    IWMB();
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    /* END RUN BENCHMARK */
+
+    THREAD_ARGS_FOREACH(t) {
+	pthread_join(t->thread, NULL);
+    }
 
 
-    printf("%d\n", measure);
+    /* PRINT PERF. MEASURES */
+
+    int sum = 0, min = INT_MAX, max =0;
+
+    THREAD_ARGS_FOREACH(t) {
+	sum += t->measure;
+	min = min(min, t->measure);
+	max = max(max, t->measure);
+    }
+    struct timespec elapsed = timediff(start, end);
+    double dt = elapsed.tv_sec + (double)elapsed.tv_nsec / 1000000000.0;
+
+
+    printf("Total time:\t%1.8f s\n", dt);
+    printf("Ops:\t\t%d\n", sum);
+    printf("Ops/s:\t\t%.0f\n", (double) sum / dt);
+    printf("Min ops/t:\t%d\n", min);
+    printf("Max ops/t:\t%d\n", max);
     
-    /* FREE */
+    
+    /* CLEANUP */
     pq_destroy(pq);
     free (rng);
     free (ts);
@@ -179,68 +200,74 @@ main (int argc, char **argv)
 }
 
 
-__thread gsl_rng *rng;
-__thread long id;
+__thread thread_args_t *args; 
 
-inline int __attribute__((always_inline))
-work (pq_t *pq)  
+/* uniform workload */
+void
+work_uni (pq_t *pq)  
 {
-    uint64_t elem;
+    unsigned long elem;
 
-    if (gsl_rng_uniform(rng) < 0.5) {
-	elem = (uint64_t) gsl_rng_get(rng);
+    if (gsl_rng_uniform(args->rng) < 0.5) {
+	elem = (unsigned long) gsl_rng_get(args->rng);
 	insert(pq, elem, (void *)elem);
-    } else {
+    } else 
 	deletemin(pq);
-    }
-    return 1;
 }
 
-inline int __attribute__((always_inline))
+/* DES workload */
+void
 work_exp (pq_t *pq)  
 {
     int pos;
-    uint64_t elem;
-    uint64_t old = deletemin(pq);
+    unsigned long elem;
+    unsigned long old = deletemin(pq);
     pos = __sync_fetch_and_add(&exps_pos, 1);
-//    elem = old + (unsigned long)ceil(gsl_ran_exponential(rng, 10000));
     elem = exps[pos];
     insert(pq, elem, (void *)elem);
-
-    return 1;
 }
+
 
 void *
 run (void *_args)
 {
-    id = (long)_args;
+    args = (thread_args_t *)_args;
     int cnt = 0;
 
 #ifdef PIN
     /* Straight allocation on 32 core machine.
      * Check with your OS + machine.  */
-    pin (gettid(), id/8 + 4*(id % 8));
+    pin (gettid(), args->id/8 + 4*(args->id % 8));
 #endif
 
-    rng = gsl_rng_alloc(gsl_rng_mt19937);
-    gsl_rng_set(rng, time(NULL)+id); 
+    // call in to main thread
+    __sync_fetch_and_add(&wait, 1);
 
-
-    // wait
-    while (!start);
-    
+    // wait until signaled by main thread
+    while (!loop);
+    /* start benchmark execution */
     do {
-        /* BEGIN work */
-	work_exp(pq);
+	work(pq);
         cnt++;
-	/* END work */
-    } while (NOW() < end);
+    } while (loop);
     /* end of measured execution */
 
-    gsl_rng_free(rng);
-    __sync_fetch_and_add(&measure, cnt);
-
-    
+    args->measure = cnt;
+    gsl_rng_free(args->rng);
     return NULL;
 }
+
+
+/* generate array of exponentially distributed variables */
+void
+gen_exps(unsigned long *arr, gsl_rng *rng, int len, int intensity)
+{
+    int i = 0;
+    arr[0] = 2;
+    while (++i < len)
+	arr[i] = arr[i-1] + 
+	    (gsl_ran_geometric (rng, 1.0/(double)intensity));
+}
+
+
 

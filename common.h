@@ -2,8 +2,6 @@
 #define COMMON_H
 #define _GNU_SOURCE
 #include <inttypes.h>
-#include <sched.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 #include <time.h>
 #include <assert.h>
@@ -11,18 +9,37 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <pthread.h>
+#include <gsl/gsl_rng.h>
 
-
-#define DCACHELINE __attribute__((aligned (2*LEVEL1_DCACHE_LINESIZE)))
-#define CACHELINE  __attribute__((aligned (1*LEVEL1_DCACHE_LINESIZE)))
+#define DCL_ALIGN __attribute__((aligned (2*CACHE_LINE_SIZE)))
+#define CACHELINE  __attribute__((aligned (1*CACHE_LINE_SIZE)))
 
 #define ATPAGESIZE   __attribute__((aligned (PAGESIZE)))
 
-#ifdef NDEBUG
-#define dprintf(M, ...)
-#else
-#define dprintf(M, ...) fprintf(stderr, "[DEBUG] %s:%d: " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-#endif
+#define SQR(x) (x)*(x)
+
+#define max(a,b)		 \
+    ({ __typeof__ (a) _a = (a);	 \
+       __typeof__ (b) _b = (b);	 \
+       _a > _b ? _a : _b; })
+
+#define min(a,b)		 \
+    ({ __typeof__ (a) _a = (a);	 \
+       __typeof__ (b) _b = (b);	 \
+       _a < _b ? _a : _b; })
+
+
+typedef struct thread_args_s
+{
+    pthread_t thread;
+    int id;
+    gsl_rng *rng;
+    int measure;
+    int cycles;
+    char pad[128];
+} thread_args_t;
+
 
 #define E(c)					\
     do {					\
@@ -33,35 +50,24 @@
 	}					\
     } while (0)
 
-
 #define E_en(c)					\
     do {					\
 	int _c = (c);				\
-	if (_c < 0) {				\
-	    errno = _c; perror("E_en");		\
+	if (_c != 0) {				\
+	    fprintf(stderr, strerror(_c));	\
 	}					\
     } while (0)
-    
-#define E_0(c)					\
+
+#define E_NULL(c)				\
     do {					\
 	if ((c) == NULL) {			\
-	    perror("E_0");			\
+	    perror("E_NULL");			\
 	}					\
     } while (0)
-
-#define clean_errno() (errno == 0 ? "None" : strerror(errno))
-
-#define log_err(M, ...) fprintf(stderr, "[ERROR] (%s:%d: errno: %s) " M "\n", __FILE__, __LINE__, clean_errno(), ##__VA_ARGS__)
-  
-#define log_warn(M, ...) fprintf(stderr, "[WARN] (%s:%d: errno: %s) " M "\n", __FILE__, __LINE__, clean_errno(), ##__VA_ARGS__)
-
-#define log_info(M, ...) fprintf(stderr, "[INFO] (%s:%d) " M "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-
-#define check_debug(A, M, ...) if(!(A)) { dprintf(M, ##__VA_ARGS__); errno=0; } 
 
 
 #if defined(__x86_64__)
-/* accurate time measurements on late intel cpus */
+/* accurate time measurements on late recent cpus */
 static inline uint64_t __attribute__((always_inline))
 read_tsc_p()
 {
@@ -83,14 +89,9 @@ read_tsc_p()
 #error Unsupported architecture
 #endif // __x86_64__
 
+extern pid_t gettid(void);
+extern void  pin(pid_t t, int cpu);
+extern struct timespec timediff(struct timespec begin, struct timespec end);
 
-
-
-
-
-// Courtesy to Keir Fraser
-#define get_marked_ref(_p)      ((void *)(((unsigned long)(_p)) | 1))
-#define get_unmarked_ref(_p)    ((void *)(((unsigned long)(_p)) & ~1))
-#define is_marked_ref(_p)       (((unsigned long)(_p)) & 1)
 
 #endif 

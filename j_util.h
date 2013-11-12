@@ -30,8 +30,8 @@
 #define E_en(c)					\
     do {					\
 	int _c = (c);				\
-	if (_c < 0) {				\
-	    errno = _c; perror("E_en");		\
+	if (_c != 0) {				\
+	    fprintf(stderr, strerror(errno));	\
 	}					\
     } while (0)
     

@@ -59,22 +59,21 @@ __thread ptst_t *ptst;
 
 static int gc_id[NUM_LEVELS];
 
-/*
- * Allocate a new node, and initialise its @level field.
- * Courtesy to Doug Lea.
- */
+
+/* initialize new node */
 static node_t *
 alloc_node(pq_t *q)
 {
     node_t *n;
     int level = 1;
-    int r = ptst->rand;
+    unsigned int r = ptst->rand;
     ptst->rand = r * 1103515245 + 12345;
+    r &= ((1u << NUM_LEVELS-1)) - 1;
+    
+    while ((r >>= 1) & 1)
+	++level;
+    assert(1 <= level && level <= 32);
 
-    if (r < 0) {
-	while ((r <<= 1) > 0)
-	    ++level;
-    }
     n = gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
@@ -147,8 +146,6 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
     return skew;
 }
 
-
-
 /***** insert *****
  * Insert a new node n with key k and value v.
  * The node will not be inserted if another node with key k is already
@@ -167,6 +164,7 @@ insert(pq_t *pq, pkey_t k, val_t v)
     node_t *new = NULL, *h = NULL;
     int skew = 0;
 
+    assert(SENTINEL_KEYMIN < k && k < SENTINEL_KEYMAX);
     critical_enter();
     
     /* Initialise a new node for insertion. */
@@ -174,7 +172,7 @@ insert(pq_t *pq, pkey_t k, val_t v)
     new->k = k;
     new->v = v;
 
-
+    /* lowest level insertion retry loop */
 retry:
     skew = locate_preds(pq, k, preds, succs);
 
@@ -182,7 +180,7 @@ retry:
      * node */
     if (succs[0]->k == k && !is_marked_ref(preds[0]->next[0]) && preds[0]->next[0] == succs[0]) {
 	free_node(new);
-	goto success;
+	goto out;
     }
     new->next[0] = succs[0];
 
@@ -191,7 +189,7 @@ retry:
     if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succs[0], new)) {
 	/* either succ has been deleted (modifying preds[0]),
 	 * or another insert has succeeded or preds[0] is head, 
-	 * and a restructure operation is underway */
+	 * and a restructure operation has updated it */
 	goto retry;
     }
 
@@ -199,9 +197,6 @@ retry:
     int i = 1;
     while ( i < new->level && !skew)
     {
-        /* optimization (?) */
-	IRMB();
-
 	// make skiplist conform more strictly to the skiplist property
 	if (preds[i] == pq->head && ((node_t *) get_unmarked_ref(pq->head->next[i-1]))->k > k) 
 	    goto success;
@@ -222,15 +217,12 @@ retry:
         } else {
 	    /* Succeeded at this level. */
 	    i++;
-
 	}
     }
 success:
-    if (new) {
+    if (new)
 	new->inserting = 0;
-	IWMB();
-    }
-    
+out:    
     critical_exit();
 }
 
@@ -314,7 +306,6 @@ deletemin(pq_t *pq)
     do {
 	offset++;
 
-	IRMB(); // speed optimization
         /* expensive, high probability that this cache line has
 	 * been modified */
 	nxt = x->next[0];
@@ -352,8 +343,7 @@ deletemin(pq_t *pq)
      * perform memory reclamation */
     if (offset <= pq->max_offset) goto out;
 
-    /* Two lines: Optimization. Marginally faster */
-    IRMB();
+    /* Optimization. Marginally faster */
     if (pq->head->next[0] != obs_head) goto out;
     
     /* try to swing the lowest level head pointer to point to newhead,
@@ -417,6 +407,7 @@ void
 pq_destroy(pq_t *pq)
 {
     node_t *cur, *pred;
+
     cur = pq->head;
 while (cur != pq->tail) {
 	pred = cur;
@@ -424,29 +415,10 @@ while (cur != pq->tail) {
 	free_node(pred);
     }
     free_node(cur); //tail
+    
+
 }
 
-
-void sequential_length(pq_t *pq) {
-    node_t *x, *nxt;
-    int cnt_del = 0, cnt = 0;
-    
-    x = pq->head;
-    while (1)
-    {
-	nxt = x->next[0];
-	if (nxt = pq->tail) goto out;
-	if (is_marked_ref(nxt)) {
-	    cnt_del++;
-	} else {
-	    cnt++;
-	}
- 	nxt = get_unmarked_ref(nxt);
-    }
-out:
-    printf("length: %d, of which %d deleted.\n", cnt+cnt_del, cnt_del);
-    
-}
 
 
 
