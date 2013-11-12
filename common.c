@@ -1,10 +1,5 @@
 #define _GNU_SOURCE
-
-
-
 #include "common.h"
-
-
 
 #if defined(__linux__)
 pid_t 
@@ -21,6 +16,13 @@ pin(pid_t t, int cpu)
     CPU_SET(cpu, &cpuset);
     E_en(sched_setaffinity(t, sizeof(cpu_set_t), &cpuset));
 }
+
+void
+gettime(struct timespec *ts)
+{
+    E(clock_gettime(CLOCK_MONOTONIC, ts));
+}
+
 #endif
 
 #if defined(__APPLE__)
@@ -42,13 +44,8 @@ gettime(struct timespec *ts)
 }
 #endif
 
-#if defined(__linux__)
-void
-gettime(struct timespec *ts)
-{
-    E(clock_gettime(CLOCK_MONOTONIC, ts));
-}
-#endif
+
+
 
 struct timespec
 timediff (struct timespec begin, struct timespec end)

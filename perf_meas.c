@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-12 13:14:17 jonatanlinden>
+ * Time-stamp: <2013-11-12 13:31:51 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -234,7 +234,7 @@ run (void *_args)
     args = (thread_args_t *)_args;
     int cnt = 0;
 
-#ifdef PIN
+#if defined(PIN) && defined(__linux__)
     /* Straight allocation on 32 core machine.
      * Check with your OS + machine.  */
     pin (gettid(), args->id/8 + 4*(args->id % 8));
