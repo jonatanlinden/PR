@@ -229,14 +229,15 @@ __thread gsl_rng *rng;
 
 
 void *
-invariant_thread(void *id) {
-    long base = PER_THREAD * (long)id;
+invariant_thread(void *_args) {
+    unsigned long id = (unsigned long)_args;
+    long base = PER_THREAD * id;
     uint64_t elem;
     int cnt = 0;
     
 
     rng = gsl_rng_alloc(gsl_rng_mt19937);
-    gsl_rng_set(rng, (unsigned long)id); 
+    gsl_rng_set(rng, id); 
 
     while(!abort_loop) {
 	if (halt) {
@@ -254,6 +255,7 @@ invariant_thread(void *id) {
 	cnt++;
     }
     printf("%d %d\n", id, cnt);
+    return NULL;
 }
 
 
@@ -267,6 +269,7 @@ add_thread(void *id) {
 	insert(pq, base+i, (val_t) base+i);
 	
     }
+    return NULL;
 }
 
 void *removemin_thread(void *id) {
@@ -276,6 +279,7 @@ void *removemin_thread(void *id) {
 	assert(v > ov);
 	ov = v;
     }
+    return NULL;
 }
 
 
