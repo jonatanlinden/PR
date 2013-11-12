@@ -1,11 +1,18 @@
 DEBUGGING := -g -O0
-
-CC          := gcc -std=c99
-CFLAGS      := -O3 -DINTEL -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
-LDFLAGS     := -lpthread -lrt `pkg-config --libs glib-2.0 gsl`
+CC	:= gcc -std=c99
+CFLAGS	:= -O3 -DINTEL -DCACHE_LINE_SIZE=`getconf LEVEL1_DCACHE_LINESIZE`
+LDFLAGS	:= -lpthread `pkg-config --libs glib-2.0 gsl`
 
 #CFLAGS      += $(DEBUGGING)
 #CFLAGS       += -DNDEBUG
+
+OS	:= $(shell uname -s)
+    ifeq ($(OS),Linux)
+        LDFLAGS += -lrt
+    endif
+#    ifeq ($(OS),Darwin)
+#
+#    endif
 
 OBJ_DIR = obj
 objs:=$(patsubst %.c,$(OBJ_DIR)/%.o,$(wildcard *.c))
