@@ -106,12 +106,6 @@ extern pid_t gettid(void);
 extern void  pin(pid_t t, int cpu);
 #endif
 
-#if defined(__APPLE__)
-struct timespec {
-    long tv_sec;
-    long tv_nsec;
-}
-#endif
 
 extern void gettime(struct timespec *t);
 extern struct timespec timediff(struct timespec, struct timespec);
