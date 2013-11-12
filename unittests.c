@@ -254,7 +254,7 @@ invariant_thread(void *_args) {
 	}
 	cnt++;
     }
-    printf("%d %d\n", id, cnt);
+    printf("%lu %d\n", id, cnt);
     return NULL;
 }
 
