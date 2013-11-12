@@ -8,8 +8,6 @@
 #define INTEL
 #endif
 
-#define CACHE_LINE_SIZE 64
-
 #if 0
 #define pthread_mutex_init(_m,_i) \
 ({ pthread_mutex_init(_m,_i); (_m)->__m_kind = PTHREAD_MUTEX_ADAPTIVE_NP; })
