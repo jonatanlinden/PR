@@ -12,7 +12,7 @@ OS	:= $(shell uname -s)
         LDFLAGS += -lrt
     endif
     ifeq ($(OS),Darwin)
-	CFLAGS += -DCACHE_LINE_SIZE=`sysctl hw.cachelinesize`
+	CFLAGS += -DCACHE_LINE_SIZE=`sysctl -n hw.cachelinesize`
     endif
 
 OBJ_DIR = obj
