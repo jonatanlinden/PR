@@ -63,7 +63,7 @@ test_parallel_del()
     printf("test parallel del, %d threads\n", nthreads);
 
     for (long i = 0; i < nthreads * PER_THREAD; i++)
-	insert(pq, i+1, (pval_t)i);
+	insert(pq, i+1, (pval_t)i+1);
 
     for (long i = 0; i < nthreads; i ++)
         pthread_create (&ts[i], NULL, removemin_thread, (void *)i);
@@ -99,9 +99,7 @@ check_invariants(pq_t *pq)
 	assert(!is_marked_ref(cur));
 	i = 1;
 	while(i < cur->level && cur->next[i]) {
-	    if(!(cur->k < cur->next[i]->k)) {
-		printf("curk: %lu\n", cur->k);
-	    }
+	    assert(cur->k < cur->next[i]->k);
 	    i++;
 	}
 	assert(cur->k > k);
@@ -149,6 +147,8 @@ test_invariants()
 	while(stop < nthreads) {
 	    IRMB();
 	}
+	printf(".");
+	fflush(stdout);
 	check_invariants(pq);
 	stop = 0;
 	halt = 0;
@@ -159,10 +159,9 @@ test_invariants()
     
     for (long i = 0; i < nthreads; i ++)
 	(void)pthread_join (ts[i], NULL);
-
-    printf("OK.\n");
+    
+    printf("\nOK.\n");
 }
-
 
 void
 setup (int max_offset) 
