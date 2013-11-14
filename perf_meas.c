@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-12 14:13:41 jonatanlinden>
+ * Time-stamp: <2013-11-14 09:29:33 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -194,7 +194,6 @@ main (int argc, char **argv)
     free (rng);
     free (ts);
     _destroy_gc_subsystem();
-    free(pq);
 }
 
 

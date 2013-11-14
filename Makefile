@@ -11,7 +11,6 @@ OS	:= $(shell uname -s)
 	CFLAGS += -DCACHE_LINE_SIZE=`sysctl -n hw.cachelinesize`
     endif
 
-
 VPATH	:= gc
 DEPS	+= Makefile $(wildcard *.h) $(wildcard gc/*.h)
 TARGETS := perf_meas unittests

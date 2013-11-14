@@ -4,7 +4,7 @@
 #include "common.h"
 
 typedef unsigned long pkey_t;
-typedef void          *val_t;
+typedef void         *pval_t;
 
 #define KEY_NULL 0
 #define NUM_LEVELS 32
@@ -18,7 +18,7 @@ typedef struct node_s
     pkey_t    k;
     int       level;
     int       inserting; //char pad2[4];
-    val_t     v;
+    pval_t    v;
     struct node_s *next[1];
 } node_t;
 
@@ -43,9 +43,9 @@ extern pq_t *pq_init(int max_offset);
 
 extern void pq_destroy(pq_t *pq);
 
-extern void insert(pq_t *pq, pkey_t k, val_t v);
+extern void insert(pq_t *pq, pkey_t k, pval_t v);
 
-extern pkey_t deletemin(pq_t *pq);
+extern pval_t deletemin(pq_t *pq);
 
 extern void sequential_length(pq_t *pq);
 

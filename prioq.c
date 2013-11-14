@@ -41,20 +41,19 @@
  */
 
 
-#include <stdlib.h>
-#include <stdio.h>
 #include <assert.h>
-#include <math.h>
-#include <inttypes.h>
-#include <gsl/gsl_randist.h>
 
+/* keir fraser's garbage collection */
 #include "gc/ptst.h"
 
+/* some utilities (e.g. memory barriers) */
 #include "common.h"
+
+/* interface, constant defines, and typedefs */
 #include "prioq.h"
 
 
-/* The thread state. */
+/* thread state. */
 __thread ptst_t *ptst;
 
 static int gc_id[NUM_LEVELS];
@@ -66,10 +65,11 @@ alloc_node(pq_t *q)
 {
     node_t *n;
     int level = 1;
+    /* crappy rng */
     unsigned int r = ptst->rand;
     ptst->rand = r * 1103515245 + 12345;
     r &= (1u << (NUM_LEVELS - 1)) - 1;
-    
+    /* uniformly distributed bits => geom. dist. level, p = 0.5 */
     while ((r >>= 1) & 1)
 	++level;
     assert(1 <= level && level <= 32);
@@ -77,13 +77,14 @@ alloc_node(pq_t *q)
     n = gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
+    /* necessary to make one of the unit tests to work properly */
+    memset(n->next, 0, level * sizeof(node_t *));
     return n;
 }
 
 
-/* Mark node as ready for reclamation to the garbage 
- * collector. */
-static inline void 
+/* Mark node as ready for reclamation to the garbage collector. */
+static void 
 free_node(node_t *n)
 {
     gc_free(ptst, (void *)n, gc_id[(n->level) - 1]);
@@ -158,7 +159,7 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
  *
  */
 void 
-insert(pq_t *pq, pkey_t k, val_t v)
+insert(pq_t *pq, pkey_t k, pval_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
     node_t *new = NULL;
@@ -247,7 +248,7 @@ out:
  *  d     d
  * 
  */
-void
+static void
 restructure(pq_t *pq)
 {
     node_t *pred, *cur, *h;
@@ -286,11 +287,10 @@ restructure(pq_t *pq)
  * Traverse level 0 next pointers until one is found that does
  * not have the delete bit set. 
  */
-pkey_t
+pval_t
 deletemin(pq_t *pq)
 {
-    val_t   v = NULL;
-    pkey_t   k = 0;
+    pval_t   v = NULL;
     node_t *x, *nxt, *obs_head = NULL, *newhead, *cur;
     int offset, lvl;
     
@@ -311,7 +311,6 @@ deletemin(pq_t *pq)
 
         // tail cannot be deleted
 	if (get_unmarked_ref(nxt) == pq->tail) {
-	    k = KEY_NULL;
 	    goto out;
 	}
 
@@ -330,12 +329,12 @@ deletemin(pq_t *pq)
 
     assert(!is_marked_ref(x));
 
-    /* save value */
     v = x->v;
-    k = x->k;
+
     
     /* If no inserting node was traversed, then use the latest 
-     * deleted node as new lowest-level head pointed node */
+     * deleted node as the new lowest-level head pointed node
+     * candidate. */
     if (newhead == NULL) newhead = x;
 
     /* if the offset is big enough, try to update the head node and
@@ -352,8 +351,10 @@ deletemin(pq_t *pq)
 	/* Update higher level pointers. */
 	restructure(pq);
 
-	/* We successfully swung the top head pointer. Mark all nodes
-	 * between the head pointer and the new head for recycling. */
+	/* We successfully swung the upper head pointer. The nodes
+	 * between the observed head (obs_head) and the new bottom
+	 * level head pointed node (newhead) are guaranteed to be
+	 * non-live. Mark them for recycling. */
 
 	cur = get_unmarked_ref(obs_head);
 	while (cur != get_unmarked_ref(newhead)) {
@@ -365,7 +366,7 @@ deletemin(pq_t *pq)
     }
 out:
     critical_exit();
-    return k;
+    return v;
 }
 
 /*
@@ -378,9 +379,12 @@ pq_init(int max_offset)
     node_t *t, *h;
     int i;
 
-    /* align head and tail nodes */
-    t = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
-    h = malloc(sizeof(node_t) + (NUM_LEVELS-1)*sizeof(node_t *));
+    /* head and tail nodes */
+    t = malloc(sizeof *t + (NUM_LEVELS-1)*sizeof(node_t *));
+    h = malloc(sizeof *h + (NUM_LEVELS-1)*sizeof(node_t *));
+
+    t->inserting = 0;
+    h->inserting = 0;
 
     t->k = SENTINEL_KEYMAX;
     h->k = SENTINEL_KEYMIN;
@@ -408,15 +412,16 @@ pq_destroy(pq_t *pq)
     node_t *cur, *pred;
 
     cur = pq->head;
-while (cur != pq->tail) {
+    while (cur != pq->tail) {
 	pred = cur;
 	cur = get_unmarked_ref(pred->next[0]);
 	free_node(pred);
     }
-    free_node(cur); //tail
-    
-
+    free(pq->tail);
+    free(pq->head);
+    free(pq);
 }
+
 
 
 
