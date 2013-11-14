@@ -98,6 +98,7 @@ check_invariants(pq_t *pq)
     while (cur != pq->tail) {
 	assert(!is_marked_ref(cur));
 	i = 1;
+	/* pred and succ at each each level is ordered correctly */
 	while(i < cur->level && cur->next[i]) {
 	    assert(cur->k < cur->next[i]->k);
 	    i++;
