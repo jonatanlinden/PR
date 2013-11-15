@@ -1,7 +1,8 @@
 PR
 ==
 
-A lock-free priority queue implementation based on Keir Fraser's skip list implementation.
+A lock-free priority queue implementation based on Keir Fraser's skip
+list implementation.
 
 
 ### Build
@@ -18,7 +19,11 @@ This will start a benchmark run with 8 threads, uniformly distributed
 keys, initial queue length of 2^15 elements, the offset parameter of
 the algorithm will be set to 64, and random operation (deletemin,
 insert).
+Run 
 
+    ./perf_meas -h
+
+for more information about parameters.
 
 ### Build Dependencies
 
