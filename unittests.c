@@ -182,7 +182,7 @@ int
 main(int argc, char **argv)
 {
     nthreads = 8;
-    
+
     ts = malloc(nthreads * sizeof(pthread_t));
     assert(ts);
 
