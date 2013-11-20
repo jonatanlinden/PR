@@ -198,9 +198,6 @@ retry:
     int i = 1;
     while ( i < new->level && !skew)
     {
-	// make skiplist conform more strictly to the skiplist property
-	if (preds[i] == pq->head && ((node_t *) get_unmarked_ref(pq->head->next[i-1]))->k > k) 
-	    goto success;
 
 	/* if successor of new is deleted, we're done */
 	if (is_marked_ref(new->next[0])) goto success;
