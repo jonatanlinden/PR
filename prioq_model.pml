@@ -1,5 +1,5 @@
 /*****
- Time-stamp: <2013-11-08 10:30:07 jonatanlinden>
+ Time-stamp: <2013-11-26 12:05:52 jonatanlinden>
  * Verification of the linearizability of the priority queue algorithm
  * presented in the paper, and that the algorithm implements a priority
  * queue.
@@ -130,9 +130,12 @@ inline alloc_node(new, k)
  * to new, given that addr = old and d = 0. d represents hence the
  * delete bit being a part of old. */
 
+/* FAO(addr, val) - representing a Fetch-and-Or, that will update
+ * addr to *addr | val. */
+
 inline LocatePreds(key) {
   d_step { /* resetting some local vars */
-    cur = 0; pred = 0; d = 0; skew = 0;
+    cur = 0; pred = 0; d = 0; del = 0;
     i = NLEVELS; pred = q.head
   }
   /* NB: index i is offset by one in comparison to paper,
@@ -144,13 +147,11 @@ inline LocatePreds(key) {
     }
     WHILE (nodes[cur].key < key || nodes[cur].d || (d && i == 1)) ->
       atomic {
-        IF (i < NLEVELS && (cur == succs[i] || nodes[succs[i]].d)) ->
-          skew = 1
-        FI;
-	pred = cur; /* local */
-	/* colocated together */
-	cur = nodes[pred].next[i-1]; 
-	d = nodes[pred].d
+        IF (d && i == 1) -> del = cur FI;
+        pred = cur; /* local */
+        /* colocated together */
+        cur = nodes[pred].next[i-1]; 
+        d = nodes[pred].d
       }
     ELIHW;
     atomic { /* local vars */
@@ -160,7 +161,6 @@ inline LocatePreds(key) {
     }
   ELIHW
 }
-
 
 inline Insert(key) {
   alloc_node(new, key)
@@ -175,60 +175,57 @@ retry:
   atomic { /* linearization point of non-failed insert */
     CAS(nodes[preds[0]].next[0], nodes[preds[0]].d, succs[0], new);
     if :: (cas_success) ->
-	  seq_add(new, key)
-	  GCASSERT(succs[0], new)
+          seq_add(new, key)
+          GCASSERT(succs[0], new)
        :: else -> goto retry /* restart */
     fi
   }
   /* swing upper levels */
   j = 1; /* i is being used in locatepreds */
-  WHILE (j <= nodes[new].level && !skew) -> 
+  WHILE (j <= nodes[new].level) -> 
     nodes[new].next[j] = succs[j];
-    IF (nodes[new].d) -> goto end_insert FI;
+    IF (nodes[new].d || nodes[succs[i]].d || succs[i] == del) -> goto end_insert FI;
     atomic {
       CAS(nodes[preds[j]].next[j], 0, succs[j], new);
       IF (cas_success) ->
-	GCASSERT(succs[j], new)
-	j++
+        GCASSERT(succs[j], new)
+        j++
       FI
     }
     IF (!cas_success) ->
-      LocatePreds(key) /* update preds and succs */
+      LocatePreds(key) /* update preds, succs and del */
       IF (succs[0] != new) -> goto end_insert FI
-      /* new is deleted, we're done */
     FI
   ELIHW;
 end_insert:
   nodes[new].inserting = 0
 }
 
-
 inline Restructure() {
   i = NLEVELS - 1; pred = q.head;
 re_continue: 
-    WHILE (i > 0) ->
-       h = nodes[q.head].next[i];
-       cur = nodes[pred].next[i];
-       IF (!nodes[h].d) -> i--; goto re_continue FI;
-       WHILE (nodes[cur].d) ->
-         pred = cur;
-         cur = nodes[pred].next[i]
-       ELIHW;
-       atomic {
-	 CAS(nodes[q.head].next[i], 0, h, nodes[pred].next[i]);
-	 IF (cas_success) ->
-	   GCASSERT(nodes[pred].next[i], q.head)
-	   i--
-	 FI
-       }
+  WHILE (i > 0) ->
+    h = nodes[q.head].next[i];
+    cur = nodes[pred].next[i];
+    IF (!nodes[h].d) -> i--; goto re_continue FI;
+    WHILE (nodes[cur].d) ->
+      pred = cur;
+      cur = nodes[pred].next[i]
+    ELIHW;
+    atomic {
+      CAS(nodes[q.head].next[i], 0, h, nodes[pred].next[i]);
+      IF (cas_success) ->
+        GCASSERT(nodes[pred].next[i], q.head)
+        i--
+      FI
+    }
   ELIHW
 }
 
 inline DeleteMin () {
-  /* offset = 0 is implicit */
-  d_step {
-    d = 1; x = q.head;
-    obs_head = nodes[x].next[0]
+  d_step {  
+    d = 1; x = q.head; offset = 0;
+    obshead = nodes[x].next[0]
   }  
   WHILE (d) ->
     atomic {
@@ -247,11 +244,11 @@ inline DeleteMin () {
     FI;
     atomic {
       /* linearization point */
-      d = FAO(nodes[x].d, 1)
+      d = FAO(nodes[x].d, 1) 
       IF (!d) ->
-	/* check linearization */
-	key = nodes[nodes[x].next[0]].key;
-	seq_remove(key)
+        /* check linearization */
+        key = nodes[nodes[x].next[0]].key;
+        seq_remove(key)
       FI
     }
     x = nodes[x].next[0]
@@ -259,13 +256,13 @@ inline DeleteMin () {
   IF (offset <= BOUNDOFFSET) -> goto end_remove FI;
   IF (newhead == NODES) -> newhead = x FI;
   atomic {
-    CAS(nodes[q.head].next[0], 0, obs_head,newhead);
+    CAS(nodes[q.head].next[0], 0, obshead,newhead);
     if :: (cas_success) -> GCASSERT(newhead, q.head)
        :: else -> goto end_remove
     fi
   }
   Restructure()
-  cur = obs_head;
+  cur = obshead;
   WHILE (cur != newhead) ->
        nxt = nodes[cur].next[0];
        nodes[cur].recycled = 1; /* MarkRecycle */
@@ -333,8 +330,8 @@ inline init_locals()
     succs[1] = 0;
     op = 0;
     offset = 0;
-    obs_head = 0;
-    skew = 0;
+    obshead = 0;
+    del = 0; /* ok, succs will never be 0 */
     cas_success = 0;
     h = 0;
     i = 0;
@@ -349,10 +346,10 @@ inline init_locals()
 
 inline define_locals()
 {
-  idx_t pred, cur, obs_head, offset, newhead, h, x, nxt;
-  idx_t preds[NLEVELS], succs[NLEVELS];
+  idx_t pred, cur, obshead, offset, newhead, h, x, nxt;
+  idx_t preds[NLEVELS], succs[NLEVELS], del;
   byte i,j;
-  bit op, d, cas_success, skew;
+  bit op, d, cas_success;
   byte key;
   
   idx_t new;
