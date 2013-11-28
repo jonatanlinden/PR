@@ -18,6 +18,7 @@ typedef struct node_s
     pkey_t    k;
     int       level;
     int       inserting; //char pad2[4];
+    int       skew;
     pval_t    v;
     struct node_s *next[1];
 } node_t;

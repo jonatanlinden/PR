@@ -77,6 +77,7 @@ alloc_node(pq_t *q)
     n = gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
+    n->skew = 0;
     /* necessary to make one of the unit tests to work properly */
     memset(n->next, 0, level * sizeof(node_t *));
     return n;
@@ -91,17 +92,19 @@ free_node(node_t *n)
 }
 
 
-/***** locate_preds *****
- * Record predecessors and non-deleted successors of key k.  If k
- * exists in list, the node will be in succs[0]
+/***** locate_preds ***** 
+ * Record predecessors and non-deleted successors of key k.  If k is
+ * encountered during traversal of list, the node will be in succs[0].
  *
- * Variable skew indicates that some node in succs is deleted, but
- * that this was not noticed at the relevant level.
+ * To detect skew in insert operation, return a pointer to the only
+ * deleted node not having it's delete flag set.
  *
- * Skew example illustration, when locating 3. Level 1 is shifted
- * in relation to level 0, due to not noticing that s[1] is deleted
- * until level 0 is reached.
+ * Skew example illustration, when locating 3. Level 1 is shifted in
+ * relation to level 0, due to not noticing that s[1] is deleted until
+ * level 0 is reached. (pointers in illustration are implicit, e.g.,
+ * 0 --> 7 at level 2.)
  *
+ *                   del
  *                   p[0] 
  * p[2]  p[1]        s[1]  s[0]  s[2]
  *  |     |           |     |     |
@@ -115,11 +118,11 @@ free_node(node_t *n)
  *
  */
 
-static int
+static node_t *
 locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 {
-    node_t *x, *x_next;
-    int skew = 0, d = 0, i;
+    node_t *x, *x_next, *del = NULL;
+    int d = 0, i;
 
     x = pq->head;
     i = NUM_LEVELS - 1;
@@ -128,23 +131,29 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 	x_next = x->next[i];
 	d = is_marked_ref(x_next);
 	x_next = get_unmarked_ref(x_next);
+	assert(x_next != NULL);
 	
         while (x_next->k < k || is_marked_ref(x_next->next[0]) 
 	       || ((i == 0) && d)) {
-	    if (i < (NUM_LEVELS - 1) && (x_next == succs[i+1])) {
-		skew = 1;
-	    }
+	    
+	    /* Record bottom level deleted node not having delete flag 
+	     * set, if traversed. */
+	    if (i == 0 && d)
+		del = x_next;
+	    
 	    x = x_next;
 	    x_next = x->next[i];
 	    d = is_marked_ref(x_next);
 	    x_next = get_unmarked_ref(x_next);
+	    assert(x_next != NULL);
+	    
 	}
         preds[i] = x;
         succs[i] = x_next;
 	i--;
     }
     assert(!is_marked_ref(succs[0]));
-    return skew;
+    return del;
 }
 
 /***** insert *****
@@ -156,15 +165,13 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
  * recorded, after which the node n is inserted from bottom to
  * top. Conditioned on that succs[i] is still the successor of
  * preds[i], n will be spliced in on level i.
- *
  */
 void 
 insert(pq_t *pq, pkey_t k, pval_t v)
 {
     node_t *preds[NUM_LEVELS], *succs[NUM_LEVELS];
-    node_t *new = NULL;
-    int skew = 0;
-
+    node_t *new = NULL, *del = NULL;
+    
     assert(SENTINEL_KEYMIN < k && k < SENTINEL_KEYMAX);
     critical_enter();
     
@@ -175,11 +182,12 @@ insert(pq_t *pq, pkey_t k, pval_t v)
 
     /* lowest level insertion retry loop */
 retry:
-    skew = locate_preds(pq, k, preds, succs);
+    del = locate_preds(pq, k, preds, succs);
 
     /* return if key already exists, i.e., is present in a non-deleted
      * node */
     if (succs[0]->k == k && !is_marked_ref(preds[0]->next[0]) && preds[0]->next[0] == succs[0]) {
+	new->inserting = 0;
 	free_node(new);
 	goto out;
     }
@@ -196,18 +204,23 @@ retry:
 
     /* Insert at each of the other levels in turn. */
     int i = 1;
-    while ( i < new->level && !skew)
+    while ( i < new->level)
     {
-
-	/* if successor of new is deleted, we're done */
-	if (is_marked_ref(new->next[0])) goto success;
+	/* If successor of new is deleted, we're done. (We're done if
+	 * only new is deleted as well, but this we can't tell) If a
+	 * candidate successor at any level is deleted, we consider
+	 * the operation completed. */
+	if (is_marked_ref(new->next[0]) ||
+	    is_marked_ref(succs[i]->next[0]) || 
+	    del == succs[i])
+	    goto success;
 
 	/* prepare next pointer of new node */
 	new->next[i] = succs[i];
         if (!__sync_bool_compare_and_swap(&preds[i]->next[i], succs[i], new))
         {
 	    /* failed due to competing insert or restruct */
-            skew = locate_preds(pq, k, preds, succs);
+            del = locate_preds(pq, k, preds, succs);
 
 	    /* if new has been deleted, we're done */
 	    if (succs[0] != new) goto success;
@@ -407,7 +420,6 @@ void
 pq_destroy(pq_t *pq)
 {
     node_t *cur, *pred;
-
     cur = pq->head;
     while (cur != pq->tail) {
 	pred = cur;
