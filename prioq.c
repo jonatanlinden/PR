@@ -77,7 +77,6 @@ alloc_node(pq_t *q)
     n = gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
-    n->skew = 0;
     /* necessary to make one of the unit tests to work properly */
     memset(n->next, 0, level * sizeof(node_t *));
     return n;
@@ -135,24 +134,20 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 	
         while (x_next->k < k || is_marked_ref(x_next->next[0]) 
 	       || ((i == 0) && d)) {
-	    
 	    /* Record bottom level deleted node not having delete flag 
 	     * set, if traversed. */
 	    if (i == 0 && d)
 		del = x_next;
-	    
 	    x = x_next;
 	    x_next = x->next[i];
 	    d = is_marked_ref(x_next);
 	    x_next = get_unmarked_ref(x_next);
 	    assert(x_next != NULL);
-	    
 	}
         preds[i] = x;
         succs[i] = x_next;
 	i--;
     }
-    assert(!is_marked_ref(succs[0]));
     return del;
 }
 
@@ -231,8 +226,11 @@ retry:
 	}
     }
 success:
-    if (new)
+    if (new) {
+        IWMB(); /* this flag must be reset after all CAS have completed */
 	new->inserting = 0;
+    }
+    
 out:    
     critical_exit();
 }
