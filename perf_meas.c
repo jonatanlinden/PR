@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-11-14 09:29:33 jonatanlinden>
+ * Time-stamp: <2013-12-04 15:58:27 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -15,7 +15,7 @@
 #include <assert.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
-
+#include <math.h>
 
 #include <limits.h>
 
@@ -98,14 +98,16 @@ main (int argc, char **argv)
     int secs		= DEFAULT_SECS;
     int exp		= 0;
     int init_size	= DEFAULT_SIZE;
+    int concise         = 0;
     work		= work_uni;
     
-    while ((opt = getopt(argc, argv, "t:n:o:s:he")) >= 0) {
+    while ((opt = getopt(argc, argv, "t:n:o:s:hex")) >= 0) {
 	switch (opt) {
 	case 'n': nthreads	= atoi(optarg); break;
 	case 't': secs		= atoi(optarg); break;
 	case 'o': offset	= atoi(optarg); break;
 	case 's': init_size	= atoi(optarg); break;
+        case 'x': concise       = 1; break;
 	case 'e': exp		= 1; work = work_exp; break;
 	case 'h': usage(stdout, argv[0]); exit(EXIT_SUCCESS); break;
 	}
@@ -182,12 +184,16 @@ main (int argc, char **argv)
     double dt = elapsed.tv_sec + (double)elapsed.tv_nsec / 1000000000.0;
 
 
+    if (!concise) {
     printf("Total time:\t%1.8f s\n", dt);
     printf("Ops:\t\t%d\n", sum);
     printf("Ops/s:\t\t%.0f\n", (double) sum / dt);
     printf("Min ops/t:\t%d\n", min);
     printf("Max ops/t:\t%d\n", max);
-    
+    } else {
+        printf("%li\n", lround((double) sum / dt));
+        
+    }
     
     /* CLEANUP */
     pq_destroy(pq);
