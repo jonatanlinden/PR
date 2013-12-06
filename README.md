@@ -27,11 +27,6 @@ Run
 
 for more information about the available parameters.
 
-A small number of tests are available, via:
-
-    ./unittests
-
-
 ### Build Dependencies
 
     gsl
