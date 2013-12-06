@@ -13,7 +13,7 @@ OS	:= $(shell uname -s)
 
 VPATH	:= gc
 DEPS	+= Makefile $(wildcard *.h) $(wildcard gc/*.h)
-TARGETS := perf_meas unittests
+TARGETS := perf_meas
 
 all: 	$(TARGETS)
 
