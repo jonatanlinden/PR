@@ -4,7 +4,7 @@ PR
 A skiplist based lock-free priority queue implementation minimizing
 the amount of coherence traffic.
 Adapted from Keir Fraser's skiplist implementation.
-
+For more information, see [http://user.it.uu.se/~jonli208/priorityqueue]
 
 ### Build
 
