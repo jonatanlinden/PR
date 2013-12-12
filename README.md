@@ -3,8 +3,8 @@ PR
 
 A skiplist based lock-free priority queue implementation minimizing
 the amount of coherence traffic.
-Adapted from Keir Fraser's skiplist implementation.
-For more information, see http://user.it.uu.se/~jonli208/priorityqueue.
+Adapted from Keir Fraser's skiplist implementation (http://www.cl.cam.ac.uk/research/srg/netos/lock-free/).
+For more information about the priority queue, see http://user.it.uu.se/~jonli208/priorityqueue.
 
 ### Build
 
