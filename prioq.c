@@ -52,6 +52,8 @@
 /* interface, constant defines, and typedefs */
 #include "prioq.h"
 
+#include "elimination.h"
+
 
 /* thread state. */
 __thread ptst_t *ptst;
@@ -192,8 +194,11 @@ retry:
      * level. */
     if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succs[0], new)) {
 	/* either succ has been deleted (modifying preds[0]),
-	 * or another insert has succeeded or preds[0] is head, 
+	 * or another insert has succeeded or preds[0] is head,
 	 * and a restructure operation has updated it */
+        if (visit(pq->elim, INS, v)) {
+            goto out;
+        }
 	goto retry;
     }
 
@@ -332,6 +337,10 @@ deletemin(pq_t *pq)
 	/* the marker is on the preceding pointer */
         /* linearisation point deletemin */
 	nxt = __sync_fetch_and_or(&x->next[0], 1);
+        if (is_marked_ref(nxt)) {
+            v = visit(pq->elim, DEL, NULL);
+            if (v) goto out;
+        }
     }
     while ( (x = get_unmarked_ref(nxt)) && is_marked_ref(nxt) );
 
@@ -406,6 +415,7 @@ pq_init(int max_offset)
     pq->head = h;
     pq->tail = t;
     pq->max_offset = max_offset;
+    pq->elim = elim_init(1, 10000);
 
     for (int i = 0; i < NUM_LEVELS; i++ )
 	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));

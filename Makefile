@@ -23,7 +23,7 @@ clean:
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TARGETS): %: %.o ptst.o gc.o prioq.o common.o
+$(TARGETS): %: %.o ptst.o gc.o prioq.o common.o elimination.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 

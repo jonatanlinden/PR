@@ -3,8 +3,11 @@
 
 #include "common.h"
 
+
 typedef unsigned long pkey_t;
 typedef void         *pval_t;
+
+#include "elimination.h"
 
 #define KEY_NULL 0
 #define NUM_LEVELS 32
@@ -30,6 +33,7 @@ typedef struct
     node_t *head;
     node_t *tail;
     char   pad[128];
+    elim_t *elim;
 } pq_t;
 
 #define get_marked_ref(_p)      ((void *)(((uintptr_t)(_p)) | 1))
@@ -50,3 +54,4 @@ extern pval_t deletemin(pq_t *pq);
 extern void sequential_length(pq_t *pq);
 
 #endif // PRIOQ_H
+
