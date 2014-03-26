@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2013-12-04 15:58:27 jonatanlinden>
+ * Time-stamp: <2014-03-26 11:25:58 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -212,7 +212,7 @@ work_uni (pq_t *pq)
     unsigned long elem;
 
     if (gsl_rng_uniform(args->rng) < 0.5) {
-	elem = (unsigned long) gsl_rng_get(args->rng);
+	elem = (unsigned long)1 + gsl_rng_get(args->rng);
 	insert(pq, elem, (void *)elem);
     } else 
 	deletemin(pq);
