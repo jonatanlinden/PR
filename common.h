@@ -92,6 +92,7 @@ read_tsc_p()
    return tsc;
 }
 
+#define CB()     __asm__ __volatile__("":::"memory")
 #define IMB()    __asm__ __volatile__("mfence":::"memory")
 #define IRMB()   __asm__ __volatile__("lfence":::"memory")
 #define IWMB()   __asm__ __volatile__("sfence":::"memory")
