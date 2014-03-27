@@ -43,8 +43,6 @@
 
 #include <assert.h>
 
-/* keir fraser's garbage collection */
-#include "gc/ptst.h"
 
 /* some utilities (e.g. memory barriers) */
 #include "common.h"
@@ -52,16 +50,42 @@
 /* interface, constant defines, and typedefs */
 #include "prioq.h"
 
+static int id_dispenser = 0;
 
 /* thread state. */
-__thread ptst_t *ptst;
+__thread int *tid;
 
-static int gc_id[NUM_LEVELS];
+/* Record pointer peek read.
+ * After having added it as a hazard pointer, make sure
+ * the pointer is still valid, otherwise return NULL.
+ */
+void *
+pptr(pq_t *q, node_t **node)
+{
+    if ( tid == NULL ) 
+    {
+	tid = malloc(sizeof *tid);
+	*tid = __sync_fetch_and_add(&id_dispenser, 1);
+    }
+
+    node_t *tmp = get_unmarked_ref(*node);
+    q->hp->recs[tid].peek = tmp;
+    if (q->hp->recs[tid].peek != get_unmarked_ref(*node)) return NULL;
+    return tmp;
+}
+
+
+/* Promote the peek hp to regular hp. */
+void
+promote(pq_t *q, const uint level)
+{
+    q->hp->recs[tid].node[level] = q->hp->recs[tid].peek;
+}
 
 
 /* initialize new node */
 static node_t *
-alloc_node(pq_t *q)
+alloc_node()
 {
     node_t *n;
     int level = 1;
@@ -74,7 +98,7 @@ alloc_node(pq_t *q)
 	++level;
     assert(1 <= level && level <= 32);
 
-    n = gc_alloc(ptst, gc_id[level - 1]);
+    n = malloc(sizeof *n + (level - 1) * sizeof (node_t *));//gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
     /* necessary to make one of the unit tests to work properly */
@@ -87,7 +111,11 @@ alloc_node(pq_t *q)
 static void 
 free_node(node_t *n)
 {
-    gc_free(ptst, (void *)n, gc_id[(n->level) - 1]);
+    retire_node(n);
+}
+
+dealloc_node(node_t *n) {
+    free(n);
 }
 
 
@@ -123,6 +151,7 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
     node_t *x, *x_next, *del = NULL;
     int d = 0, i;
 
+restart:
     x = pq->head;
     i = NUM_LEVELS - 1;
     while (i >= 0)
@@ -130,7 +159,9 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 	x_next = x->next[i];
 	d = is_marked_ref(x_next);
 	x_next = get_unmarked_ref(x_next);
-	assert(x_next != NULL);
+        
+	x_next = pptr(q, &x->next[i], tid);
+	if (NULL == x_next) continue;
 	
         while (x_next->k < k || is_marked_ref(x_next->next[0]) 
 	       || ((i == 0) && d)) {
@@ -142,7 +173,9 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 	    x_next = x->next[i];
 	    d = is_marked_ref(x_next);
 	    x_next = get_unmarked_ref(x_next);
-	    assert(x_next != NULL);
+            promote(pq, i);
+            x_next = pptr(q, &x->next[i], tid);
+            if (NULL == x_next) goto restart;
 	}
         preds[i] = x;
         succs[i] = x_next;
@@ -168,7 +201,6 @@ insert(pq_t *pq, pkey_t k, pval_t v)
     node_t *new = NULL, *del = NULL;
     
     assert(SENTINEL_KEYMIN < k && k < SENTINEL_KEYMAX);
-    critical_enter();
     
     /* Initialise a new node for insertion. */
     new    = alloc_node(pq);
@@ -232,7 +264,7 @@ success:
     }
     
 out:    
-    critical_exit();
+
 }
 
 
@@ -305,7 +337,6 @@ deletemin(pq_t *pq)
     newhead = NULL;
     offset = lvl = 0;
 
-    critical_enter();
 
     x = pq->head;
     obs_head = x->next[0];
@@ -373,7 +404,6 @@ deletemin(pq_t *pq)
 	}
     }
 out:
-    critical_exit();
     return v;
 }
 
@@ -407,8 +437,7 @@ pq_init(int max_offset)
     pq->tail = t;
     pq->max_offset = max_offset;
 
-    for (int i = 0; i < NUM_LEVELS; i++ )
-	gc_id[i] = gc_add_allocator(sizeof(node_t) + i*sizeof(node_t *));
+    pq->hp = hp_init(32+1, 3, free);
 
     return pq;
 }

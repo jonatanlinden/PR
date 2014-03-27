@@ -17,7 +17,7 @@ typedef struct node_s
 {
     pkey_t    k;
     int       level;
-    int       inserting; //char pad2[4];
+    int       inserting;
     pval_t    v;
     struct node_s *next[1];
 } node_t;
@@ -30,6 +30,7 @@ typedef struct
     node_t *head;
     node_t *tail;
     char   pad[128];
+    hp_t * hp;
 } pq_t;
 
 #define get_marked_ref(_p)      ((void *)(((uintptr_t)(_p)) | 1))
