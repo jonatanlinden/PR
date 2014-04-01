@@ -2,8 +2,8 @@
 #include <glib.h>
 #include <stdlib.h>
 #include <glib.h>
+#include <stdio.h>
 #include "hp.h"
-#include "j_util.h"
 
 
 __thread GSList *rlist = NULL;
@@ -13,16 +13,17 @@ hp_t *
 hp_init(int const K, int const nthreads, void (* hp_node_destructor)(void *))
 {
     hp_t *h;
-    E_0(h = malloc(sizeof(hp_rec_list_t)));
+    h = malloc(sizeof(hp_t));
     
     h->K = K;
     h->nthreads = nthreads;
     h->hp_node_destructor = hp_node_destructor;
     h->cnt = 0;
-    E_0(h->recs = malloc(h->nthreads * sizeof(hp_rec_t)));
+    h->recs = malloc(h->nthreads * sizeof(hp_rec_t));
     
     for (int i = 0; i < nthreads; i++) {
-	E_0(h->recs[i].node = malloc(h->K * sizeof(void *)));
+	h->recs[i].node = malloc(h->K * sizeof(void *));
+        h->recs[i].peek = malloc(h->K * sizeof(void *));
     }
     return h;
 }
@@ -30,9 +31,10 @@ hp_init(int const K, int const nthreads, void (* hp_node_destructor)(void *))
 void 
 hp_destroy(hp_t *h)
 {
-    dprintf("A total of %d nodes were recycled by hp.\n", h->cnt);
+    printf("A total of %d nodes were recycled by hp.\n", h->cnt);
     for (int i = 0; i < h->nthreads; i++) {
 	free(h->recs[i].node);
+	free(h->recs[i].peek);
     }
     free(h->recs);
     free(h);
@@ -53,11 +55,11 @@ scan (hp_t *hp)
 	    tmp = hp->recs[i].node[j];
 	    if (NULL != tmp) {
 		plist = g_slist_prepend(plist, tmp);
+	    } 
+            tmp = hp->recs[i].peek[j];
+            if (NULL != tmp) {
+		plist = g_slist_prepend(plist, tmp);
 	    }
-	}
-	tmp = hp->recs[i].peek;
-	if (NULL != tmp) {
-	    plist = g_slist_prepend(plist, tmp);
 	}
     }
 
@@ -104,3 +106,7 @@ retire_node(hp_t *hp, void *node_ptr)
 	scan(hp);
     }
 }
+
+
+
+

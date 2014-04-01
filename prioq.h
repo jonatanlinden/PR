@@ -2,6 +2,7 @@
 #define PRIOQ_H
 
 #include "common.h"
+#include "hp.h"
 
 typedef unsigned long pkey_t;
 typedef void         *pval_t;

@@ -92,6 +92,19 @@ read_tsc_p()
    return tsc;
 }
 
+static inline uint64_t __attribute__((always_inline))
+rdtsc()
+{
+   uint64_t tsc;
+   __asm__ __volatile__ ("rdtsc\n"
+         "shl $32, %%rdx\n"
+         "or %%rdx, %%rax"
+         : "=a"(tsc)
+         :
+         : "%rcx", "%rdx");
+   return tsc;
+}
+
 #define CB()     __asm__ __volatile__("":::"memory")
 #define IMB()    __asm__ __volatile__("mfence":::"memory")
 #define IRMB()   __asm__ __volatile__("lfence":::"memory")

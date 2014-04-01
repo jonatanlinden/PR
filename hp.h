@@ -5,7 +5,7 @@
 typedef struct hp_rec_s
 {
     void **node;
-    void *peek;
+    void **peek;
 } hp_rec_t;
 
 /* global storage of all hps */
@@ -14,7 +14,7 @@ typedef struct hp_s
     hp_rec_t *recs;
     int nthreads;
     int K;
-    uint cnt;
+    unsigned int cnt;
     void (* hp_node_destructor)(void *);
 
 } hp_t;

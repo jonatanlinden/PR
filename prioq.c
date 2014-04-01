@@ -50,36 +50,46 @@
 /* interface, constant defines, and typedefs */
 #include "prioq.h"
 
+
 static int id_dispenser = 0;
 
+typedef struct 
+{
+    /* Thread id */
+    unsigned int id;
+    unsigned int rand;
+} ptst_t;
+
 /* thread state. */
-__thread int *tid;
+__thread ptst_t *ptst = NULL;
 
 /* Record pointer peek read.
  * After having added it as a hazard pointer, make sure
  * the pointer is still valid, otherwise return NULL.
  */
 void *
-pptr(pq_t *q, node_t **node)
+pptr(pq_t *q, node_t **node, const unsigned int level)
 {
-    if ( tid == NULL ) 
+    if ( NULL == ptst )
     {
-	tid = malloc(sizeof *tid);
-	*tid = __sync_fetch_and_add(&id_dispenser, 1);
+	ptst = calloc(1, sizeof *ptst);
+	ptst->id = __sync_fetch_and_add(&id_dispenser, 1);
+        ptst->rand = rdtsc();
     }
 
-    node_t *tmp = get_unmarked_ref(*node);
-    q->hp->recs[tid].peek = tmp;
-    if (q->hp->recs[tid].peek != get_unmarked_ref(*node)) return NULL;
+    node_t *tmp = *node;
+    node_t *save = get_unmarked_ref(tmp);
+    q->hp->recs[ptst->id].peek[level] = save;
+    if (q->hp->recs[ptst->id].peek[level] != get_unmarked_ref(*node)) return NULL;
     return tmp;
 }
 
 
 /* Promote the peek hp to regular hp. */
 void
-promote(pq_t *q, const uint level)
+promote(pq_t *q, const unsigned int level)
 {
-    q->hp->recs[tid].node[level] = q->hp->recs[tid].peek;
+    q->hp->recs[ptst->id].node[level] = q->hp->recs[ptst->id].peek[level];
 }
 
 
@@ -89,6 +99,15 @@ alloc_node()
 {
     node_t *n;
     int level = 1;
+
+    // init main thread
+    if (NULL == ptst) {
+        ptst = calloc(1, sizeof *ptst);
+        ptst->id = __sync_fetch_and_add(&id_dispenser, 1);
+        ptst->rand = rdtsc();
+    }
+    
+
     /* crappy rng */
     unsigned int r = ptst->rand;
     ptst->rand = r * 1103515245 + 12345;
@@ -109,14 +128,11 @@ alloc_node()
 
 /* Mark node as ready for reclamation to the garbage collector. */
 static void 
-free_node(node_t *n)
+free_node(pq_t *pq, node_t *n)
 {
-    retire_node(n);
+    retire_node(pq->hp, n);
 }
 
-dealloc_node(node_t *n) {
-    free(n);
-}
 
 
 /***** locate_preds ***** 
@@ -156,26 +172,24 @@ restart:
     i = NUM_LEVELS - 1;
     while (i >= 0)
     {
-	x_next = x->next[i];
+	x_next = pptr(pq, &x->next[i], i);
+	if (NULL == x_next) goto restart;
+
 	d = is_marked_ref(x_next);
 	x_next = get_unmarked_ref(x_next);
-        
-	x_next = pptr(q, &x->next[i], tid);
-	if (NULL == x_next) continue;
-	
+
         while (x_next->k < k || is_marked_ref(x_next->next[0]) 
 	       || ((i == 0) && d)) {
 	    /* Record bottom level deleted node not having delete flag 
 	     * set, if traversed. */
 	    if (i == 0 && d)
 		del = x_next;
-	    x = x_next;
-	    x_next = x->next[i];
+	    promote(pq, i);
+            x = x_next;
+	    x_next = pptr(pq, &x->next[i], i);
+            if (NULL == x_next) goto restart;
 	    d = is_marked_ref(x_next);
 	    x_next = get_unmarked_ref(x_next);
-            promote(pq, i);
-            x_next = pptr(q, &x->next[i], tid);
-            if (NULL == x_next) goto restart;
 	}
         preds[i] = x;
         succs[i] = x_next;
@@ -215,7 +229,7 @@ retry:
      * node */
     if (succs[0]->k == k && !is_marked_ref(preds[0]->next[0]) && preds[0]->next[0] == succs[0]) {
 	new->inserting = 0;
-	free_node(new);
+	free_node(pq, new);
 	goto out;
     }
     new->next[0] = succs[0];
@@ -262,8 +276,8 @@ success:
         IWMB(); /* this flag must be reset after all CAS have completed */
 	new->inserting = 0;
     }
+out:;
     
-out:    
 
 }
 
@@ -294,11 +308,16 @@ restructure(pq_t *pq)
     node_t *pred, *cur, *h;
     int i = NUM_LEVELS - 1;
 
+restart:
     pred = pq->head;
     while (i > 0) {
-	h = pq->head->next[i]; /* record observed head */
+        h = pptr(pq, &pq->head->next[i], i); /* record observed head */
+        if (NULL == h) goto restart;
+        promote(pq, i);
 	IRMB(); /* the order of these reads must be maintained */
-	cur = pred->next[i]; /* take one step forward from pred */
+        cur = pptr(pq, &pred->next[i], i);
+        if (NULL == cur) goto restart;
+
 	if (!is_marked_ref(h->next[0])) {
 	    i--;
 	    continue;
@@ -308,7 +327,8 @@ restructure(pq_t *pq)
 	 */
 	while(is_marked_ref(cur->next[0])) {
 	    pred = cur;
-	    cur = pred->next[i];
+	    cur = pptr(pq, &pred->next[i], i);
+            if (NULL == cur) goto restart;
 	}
 	assert(is_marked_ref(pred->next[0]));
 	
@@ -334,20 +354,22 @@ deletemin(pq_t *pq)
     node_t *x, *nxt, *obs_head = NULL, *newhead, *cur;
     int offset, lvl;
     
+restart:
     newhead = NULL;
     offset = lvl = 0;
 
 
-    x = pq->head;
+    x = pptr(pq, &pq->head, 0);
     obs_head = x->next[0];
-
+    
     do {
 	offset++;
-
+        promote(pq, 0);
         /* expensive, high probability that this cache line has
 	 * been modified */
-	nxt = x->next[0];
-
+	nxt = pptr(pq, &x->next[0], 0);
+        if (NULL == nxt) goto restart;
+        
         // tail cannot be deleted
 	if (get_unmarked_ref(nxt) == pq->tail) {
 	    goto out;
@@ -363,6 +385,7 @@ deletemin(pq_t *pq)
 	/* the marker is on the preceding pointer */
         /* linearisation point deletemin */
 	nxt = __sync_fetch_and_or(&x->next[0], 1);
+        pptr(pq, &nxt, 0);
     }
     while ( (x = get_unmarked_ref(nxt)) && is_marked_ref(nxt) );
 
@@ -399,7 +422,7 @@ deletemin(pq_t *pq)
 	while (cur != get_unmarked_ref(newhead)) {
 	    nxt = get_unmarked_ref(cur->next[0]);
 	    assert(is_marked_ref(cur->next[0]));
-	    free_node(cur);
+	    free_node(pq, cur);
 	    cur = nxt;
 	}
     }
@@ -416,6 +439,8 @@ pq_init(int max_offset)
     pq_t *pq;
     node_t *t, *h;
     int i;
+
+
 
     /* head and tail nodes */
     t = malloc(sizeof *t + (NUM_LEVELS-1)*sizeof(node_t *));
@@ -437,7 +462,7 @@ pq_init(int max_offset)
     pq->tail = t;
     pq->max_offset = max_offset;
 
-    pq->hp = hp_init(32+1, 3, free);
+    pq->hp = hp_init(32+1, 4, free);
 
     return pq;
 }
@@ -451,10 +476,10 @@ pq_destroy(pq_t *pq)
     while (cur != pq->tail) {
 	pred = cur;
 	cur = get_unmarked_ref(pred->next[0]);
-	free_node(pred);
+	free_node(pq, pred);
     }
     free(pq->tail);
-    free(pq->head);
+//    free(pq->head);
     free(pq);
 }
 

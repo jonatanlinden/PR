@@ -3,7 +3,7 @@
  *
  * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2014-03-26 11:25:58 jonatanlinden>
+ * Time-stamp: <2014-03-28 08:16:46 jonatanlinden>
  */
 
 #define _GNU_SOURCE
@@ -18,8 +18,6 @@
 #include <math.h>
 
 #include <limits.h>
-
-#include "gc/gc.h"
 
 #include "common.h"
 #include "prioq.h"
@@ -123,7 +121,6 @@ main (int argc, char **argv)
     E_NULL(rng = gsl_rng_alloc(gsl_rng_mt19937));
     gsl_rng_set(rng, time(NULL));
 
-    _init_gc_subsystem();
     pq = pq_init(offset);
 
     if (exp) {
@@ -199,7 +196,6 @@ main (int argc, char **argv)
     pq_destroy(pq);
     free (rng);
     free (ts);
-    _destroy_gc_subsystem();
 }
 
 
