@@ -3,7 +3,7 @@
  * 
  * Lock-free concurrent priority queue.
  *
- * Copyright (c) 2012-2013, Jonatan Linden
+ * Copyright (c) 2012-2014, Jonatan Linden
  * 
  * Adapted from Keir Fraser's skiplist, 
  * Copyright (c) 2001-2003, Keir Fraser
@@ -77,7 +77,6 @@ alloc_node(pq_t *q)
     n = gc_alloc(ptst, gc_id[level - 1]);
     n->level = level;
     n->inserting = 1;
-    /* necessary to make one of the unit tests to work properly */
     memset(n->next, 0, level * sizeof(node_t *));
     return n;
 }
@@ -227,7 +226,7 @@ retry:
     }
 success:
     if (new) {
-        IWMB(); /* this flag must be reset after all CAS have completed */
+        /* this flag must be reset *after* all CAS have completed */
 	new->inserting = 0;
     }
     
@@ -264,8 +263,9 @@ restructure(pq_t *pq)
 
     pred = pq->head;
     while (i > 0) {
+        /* the order of these reads must be maintained */
 	h = pq->head->next[i]; /* record observed head */
-	IRMB(); /* the order of these reads must be maintained */
+	CMB();
 	cur = pred->next[i]; /* take one step forward from pred */
 	if (!is_marked_ref(h->next[0])) {
 	    i--;
@@ -388,8 +388,9 @@ pq_init(int max_offset)
     int i;
 
     /* head and tail nodes */
-    t = malloc(sizeof *t + (NUM_LEVELS-1)*sizeof(node_t *));
-    h = malloc(sizeof *h + (NUM_LEVELS-1)*sizeof(node_t *));
+    t = calloc(1, sizeof *t + (NUM_LEVELS-1)*sizeof(node_t *));
+    h = calloc(1, sizeof *h + (NUM_LEVELS-1)*sizeof(node_t *));
+    
 
     t->inserting = 0;
     h->inserting = 0;
