@@ -391,7 +391,6 @@ pq_init(int max_offset)
     t = calloc(1, sizeof *t + (NUM_LEVELS-1)*sizeof(node_t *));
     h = calloc(1, sizeof *h + (NUM_LEVELS-1)*sizeof(node_t *));
     
-
     t->inserting = 0;
     h->inserting = 0;
 

@@ -91,9 +91,9 @@ read_tsc_p()
 	 : "%rcx", "%rdx");
    return tsc;
 }
+
 /* compiler memory barrier */
 #define CMB() __asm__ __volatile__ ("" : : : "memory")
-
 
 #define IMB()    __asm__ __volatile__("mfence":::"memory")
 #define IRMB()   __asm__ __volatile__("lfence":::"memory")
