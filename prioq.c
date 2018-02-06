@@ -64,14 +64,12 @@ static node_t *
 alloc_node(pq_t *q)
 {
     node_t *n;
-    int level = 1;
-    /* crappy rng */
+    /* crappy lcg rng */
     unsigned int r = ptst->rand;
     ptst->rand = r * 1103515245 + 12345;
     r &= (1u << (NUM_LEVELS - 1)) - 1;
     /* uniformly distributed bits => geom. dist. level, p = 0.5 */
-    while ((r >>= 1) & 1)
-	++level;
+    int level = __builtin_ctz(r) + 1;
     assert(1 <= level && level <= 32);
 
     n = gc_alloc(ptst, gc_id[level - 1]);
@@ -131,7 +129,7 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
 	x_next = get_unmarked_ref(x_next);
 	assert(x_next != NULL);
 	
-        while (x_next->k < k || is_marked_ref(x_next->next[0]) 
+    while (x_next->k < k || is_marked_ref(x_next->next[0])
 	       || ((i == 0) && d)) {
 	    /* Record bottom level deleted node not having delete flag 
 	     * set, if traversed. */
