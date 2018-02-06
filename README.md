@@ -1,5 +1,8 @@
 PR
 ==
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://github.com/jonatanlinden/PR/blob/master/COPYING)
+[![Build Status](https://travis-ci.org/jonatanlinden/PR.png?branch=master)](https://travis-ci.org/jonatanlinden/PR)
+
 
 A skiplist based lock-free priority queue implementation minimizing
 the amount of coherence traffic. Adapted from an implementation of
