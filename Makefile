@@ -1,6 +1,6 @@
 CC	:= gcc
 CFLAGS	:= -O3 -DINTEL -Wall -std=c99
-LDFLAGS	:= -lpthread
+LDFLAGS	:= -lpthread -lm
 
 OS	:= $(shell uname -s)
     ifeq ($(OS),Linux)
