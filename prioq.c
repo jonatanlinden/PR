@@ -40,7 +40,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
+#include <stdlib.h>
 #include <assert.h>
 
 /* keir fraser's garbage collection */
