@@ -14,7 +14,7 @@ OS	:= $(shell uname -s)
 VPATH	:= gc
 DEPS	+= Makefile $(wildcard *.h) $(wildcard gc/*.h)
 
-TARGETS := perf_meas
+TARGETS := perf_meas unittests
 
 
 all:	$(TARGETS)
@@ -28,5 +28,7 @@ clean:
 $(TARGETS): %: %.o ptst.o gc.o prioq.o common.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
+test: unittests
+	./unittests
 
-.PHONY: all clean
+.PHONY: all clean test

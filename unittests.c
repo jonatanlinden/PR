@@ -31,7 +31,7 @@ typedef void (* test_func_t)(void);
 test_func_t tests[] = {
     test_parallel_del,
     test_parallel_add,
-    test_invariants,
+//    test_invariants,
     NULL
 };
 
@@ -121,7 +121,7 @@ check_invariants(pq_t *pq)
 }
 
 /* test_invariants control of invariant threads */
-int halt = 0, stop = 0, abort_loop = 0;
+volatile int halt = 0, stop = 0, abort_loop = 0;
 
 /* A rough way to test that certain invariants always are true.
  * Run a certain number of operations, halt, check invariants,
@@ -141,7 +141,6 @@ test_invariants()
     for (long i = 0; i < nthreads; i ++)
         pthread_create (&ts[i], NULL, invariant_thread, (void *)i);
 
-
     for (int i = 0; i < 200; i++) {
 	usleep(50000);
 	halt = 1;
@@ -159,7 +158,7 @@ test_invariants()
     abort_loop = 1;
     
     for (long i = 0; i < nthreads; i ++)
-	(void)pthread_join (ts[i], NULL);
+        (void)pthread_join (ts[i], NULL);
     
     printf("\nOK.\n");
 }
@@ -187,9 +186,9 @@ main(int argc, char **argv)
     assert(ts);
 
     for(test_func_t *tf = tests; *tf; tf++) {
-	setup(10);
-	(*tf)();
-	teardown();
+        setup(10);
+        (*tf)();
+        teardown();
     }
     
     return 0;
