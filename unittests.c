@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <pthread.h>
-#include <gsl/gsl_rng.h>
+#include <stdlib.h>
 
 #include "gc/gc.h"
 
@@ -195,7 +195,7 @@ main(int argc, char **argv)
     return 0;
 }
 
-__thread gsl_rng *rng;
+__thread unsigned short rng[3];
 
 void *
 invariant_thread(void *_args)
@@ -204,8 +204,7 @@ invariant_thread(void *_args)
     unsigned long elem;
     int cnt = 0;
 
-    rng = gsl_rng_alloc(gsl_rng_mt19937);
-    gsl_rng_set(rng, id); 
+    rng_init(rng);
 
     while(!abort_loop) {
 	if (halt) {
@@ -213,8 +212,8 @@ invariant_thread(void *_args)
 	    while(halt)
 		IRMB();
 	}
-	if (gsl_rng_uniform(rng) < 0.5) {
-	    elem = (unsigned long) gsl_rng_get(rng);
+	if (erand48(rng) < 0.5) {
+	    elem = nrand48(rng);
 	    insert(pq, elem+1, (pval_t)elem + 1);
 	} else {
 	    deletemin(pq);

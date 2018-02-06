@@ -1,9 +1,9 @@
 /** 
  * Priority queue test harness.
  *
- * Author: Jonatan Linden <jonatan.linden@it.uu.se>
  *
- * Time-stamp: <2014-10-20 16:06:17 jonatanlinden>
+ * Copyright (c) 2013-2018, Jonatan Linden
+ *
  */
 
 #define _GNU_SOURCE
@@ -13,8 +13,6 @@
 #include <pthread.h>
 #include <time.h>
 #include <assert.h>
-#include <gsl/gsl_rng.h>
-#include <gsl/gsl_randist.h>
 #include <math.h>
 
 #include <limits.h>
@@ -80,6 +78,7 @@ usage(FILE *out, const char *argv0)
 	    "Default: %i\n",
 	    DEFAULT_SIZE);
 }
+
 
 
 static inline unsigned long
@@ -164,10 +163,9 @@ main (int argc, char **argv)
 
    /* initialize threads */
     THREAD_ARGS_FOREACH(t) {
-	t->id = i;
-	E_NULL(t->rng = gsl_rng_alloc(gsl_rng_mt19937));
-	gsl_rng_set(t->rng, read_tsc_p());
-	E_en(pthread_create(&t->thread, NULL, run, t));
+        t->id = i;
+        rng_init(t->rng);
+        E_en(pthread_create(&t->thread, NULL, run, t));
     }
 
     /* RUN BENCHMARK */
@@ -229,11 +227,11 @@ work_uni (pq_t *pq)
 {
     unsigned long elem;
 
-    if (gsl_rng_uniform(args->rng) < 0.5) {
-	elem = (unsigned long)1 + gsl_rng_get(args->rng);
-	insert(pq, elem, (void *)elem);
+    if (erand48(args->rng) < 0.5) {
+        elem = (unsigned long)1 + nrand48(args->rng);
+        insert(pq, elem, (void *)elem);
     } else 
-	deletemin(pq);
+        deletemin(pq);
 }
 
 /* DES workload */
@@ -275,7 +273,6 @@ run (void *_args)
     /* end of measured execution */
 
     args->measure = cnt;
-    gsl_rng_free(args->rng);
     return NULL;
 }
 
@@ -288,7 +285,7 @@ gen_exps(unsigned long *arr, unsigned short rng[3], int len, int intensity)
     arr[0] = 2;
     while (++i < len)
 	arr[i] = arr[i-1] + 
-	    next_geometric(rng, intensity); //(gsl_ran_geometric (rng, 1.0/(double)intensity));
+	    next_geometric(rng, intensity);
 }
 
 

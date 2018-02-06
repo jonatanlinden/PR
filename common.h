@@ -9,7 +9,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <pthread.h>
-#include <gsl/gsl_rng.h>
 
 #if defined(__linux__)
 #include <time.h>
@@ -45,7 +44,7 @@ typedef struct thread_args_s
 {
     pthread_t thread;
     int id;
-    gsl_rng *rng;
+    unsigned short rng[3];
     int measure;
     int cycles;
     char pad[128];
@@ -109,6 +108,7 @@ extern pid_t gettid(void);
 extern void  pin(pid_t t, int cpu);
 #endif
 
+void rng_init (unsigned short rng[3]);
 extern void gettime(struct timespec *t);
 extern struct timespec timediff(struct timespec, struct timespec);
 

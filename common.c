@@ -60,3 +60,18 @@ timediff (struct timespec begin, struct timespec end)
     }
     return tmp;
 }
+
+void
+rng_init (unsigned short rng[3])
+{
+    struct timespec time;
+
+    // finally available in macos 10.12 as well!
+    clock_gettime(CLOCK_REALTIME, &time);
+
+    /* initialize seed */
+    rng[0] = time.tv_nsec;
+    rng[1] = time.tv_nsec >> 16;
+    rng[2] = time.tv_nsec >> 32;
+
+}

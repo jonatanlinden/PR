@@ -4,7 +4,7 @@
  * Per-thread state management.
  *
  *
- * Copyright (c) 2013, Jonatan Linden
+ * Copyright (c) 2013-2018, Jonatan Linden
  * Copyright (c) 2002-2003, K A Fraser
  */
 
@@ -12,8 +12,6 @@
 #define __PTST_H__
 
 typedef struct ptst_st ptst_t;
-
-#include <gsl/gsl_rng.h>
 
 #include "gc.h"
 

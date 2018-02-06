@@ -31,11 +31,6 @@ Run
 
 for more information about the available parameters.
 
-
-### Build Dependencies
-
-    gsl
-
 ### Extras
 
 A SPIN model is included, with linearizability checks of the

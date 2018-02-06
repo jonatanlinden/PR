@@ -1,6 +1,6 @@
-CC	:= gcc 
+CC	:= gcc
 CFLAGS	:= -O3 -DINTEL -Wall -std=c99
-LDFLAGS	:= -lpthread `pkg-config --libs gsl`
+LDFLAGS	:= -lpthread
 
 OS	:= $(shell uname -s)
     ifeq ($(OS),Linux)
@@ -17,10 +17,10 @@ DEPS	+= Makefile $(wildcard *.h) $(wildcard gc/*.h)
 TARGETS := perf_meas
 
 
-all: 	$(TARGETS)
+all:	$(TARGETS)
 
 clean:
-	rm -f $(TARGETS) core *.o 
+	rm -f $(TARGETS) core *.o
 
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
