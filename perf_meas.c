@@ -41,7 +41,7 @@
  * DES workload */
 unsigned long *exps;
 int exps_pos = 0;
-void gen_exps(unsigned long *arr, gsl_rng *rng, int len, int intensity);
+void gen_exps(unsigned long *arr, unsigned short rng[3], int len, int intensity);
 
 /* the workloads */
 void work_exp (pq_t *pq);
@@ -82,11 +82,23 @@ usage(FILE *out, const char *argv0)
 }
 
 
+static inline unsigned long
+next_geometric (unsigned short seed[3], unsigned int p)
+{
+    /* inverse transform sampling */
+    /* cf. https://en.wikipedia.org/wiki/Geometric_distribution */
+    return floor(log(erand48(seed))/log(1 - p));
+    /* uniformly distributed bits => geom. dist. level, p = 0.5 */
+    //return __builtin_ctz(nrand48(seed) & (1LU << max) - 1) + 1;
+}
+
+
 int
 main (int argc, char **argv) 
 {
     int opt;
-    gsl_rng *rng;
+    unsigned short rng[3];
+    struct timespec time;
     struct timespec start, end;
     thread_args_t *t;
     unsigned long elem;
@@ -120,15 +132,22 @@ main (int argc, char **argv)
     E_NULL(ts = malloc(nthreads*sizeof(thread_args_t)));
     memset(ts, 0, nthreads*sizeof(thread_args_t));
 
-    E_NULL(rng = gsl_rng_alloc(gsl_rng_mt19937));
-    gsl_rng_set(rng, time(NULL));
+    // finally available in macos 10.12 as well!
+    clock_gettime(CLOCK_REALTIME, &time);
 
+    /* initialize seed */
+    rng[0] = time.tv_nsec;
+    rng[1] = time.tv_nsec >> 16;
+    rng[2] = time.tv_nsec >> 32;
+
+    /* initialize garbage collection */
     _init_gc_subsystem();
     pq = pq_init(offset);
 
+    // if DES workload, pre-sample values/event times
     if (exp) {
-	E_NULL(exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS));
-	gen_exps(exps, rng, EXPS, 1000);
+        E_NULL(exps = (unsigned long *)malloc(sizeof(unsigned long) * EXPS));
+        gen_exps(exps, rng, EXPS, 1000);
     }
     
     /* pre-fill priority queue with elements */
@@ -137,7 +156,7 @@ main (int argc, char **argv)
 	    elem = exps[exps_pos++];
 	    insert(pq, elem, (void *)elem);
 	} else {
-	    elem =  (unsigned long) gsl_rng_get(rng);
+	    elem = nrand48(rng);
 	    insert(pq, elem, (void *)elem);
 	}
     }
@@ -197,7 +216,6 @@ main (int argc, char **argv)
     
     /* CLEANUP */
     pq_destroy(pq);
-    free (rng);
     free (ts);
     _destroy_gc_subsystem();
 }
@@ -264,13 +282,13 @@ run (void *_args)
 
 /* generate array of exponentially distributed variables */
 void
-gen_exps(unsigned long *arr, gsl_rng *rng, int len, int intensity)
+gen_exps(unsigned long *arr, unsigned short rng[3], int len, int intensity)
 {
     int i = 0;
     arr[0] = 2;
     while (++i < len)
 	arr[i] = arr[i-1] + 
-	    (gsl_ran_geometric (rng, 1.0/(double)intensity));
+	    next_geometric(rng, intensity); //(gsl_ran_geometric (rng, 1.0/(double)intensity));
 }
 
 
