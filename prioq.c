@@ -124,26 +124,26 @@ locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
     i = NUM_LEVELS - 1;
     while (i >= 0)
     {
-	x_next = x->next[i];
-	d = is_marked_ref(x_next);
-	x_next = get_unmarked_ref(x_next);
-	assert(x_next != NULL);
+        x_next = x->next[i];
+        d = is_marked_ref(x_next);
+        x_next = get_unmarked_ref(x_next);
+        assert(x_next != NULL);
 	
-    while (x_next->k < k || is_marked_ref(x_next->next[0])
-	       || ((i == 0) && d)) {
-	    /* Record bottom level deleted node not having delete flag 
-	     * set, if traversed. */
-	    if (i == 0 && d)
-		del = x_next;
-	    x = x_next;
-	    x_next = x->next[i];
-	    d = is_marked_ref(x_next);
-	    x_next = get_unmarked_ref(x_next);
-	    assert(x_next != NULL);
-	}
+        while (x_next->k < k || is_marked_ref(x_next->next[0])
+               || ((i == 0) && d)) {
+            /* Record bottom level deleted node not having delete flag
+             * set, if traversed. */
+            if (i == 0 && d)
+                del = x_next;
+            x = x_next;
+            x_next = x->next[i];
+            d = is_marked_ref(x_next);
+            x_next = get_unmarked_ref(x_next);
+            assert(x_next != NULL);
+        }
         preds[i] = x;
         succs[i] = x_next;
-	i--;
+        i--;
     }
     return del;
 }
@@ -173,62 +173,62 @@ insert(pq_t *pq, pkey_t k, pval_t v)
     new->v = v;
 
     /* lowest level insertion retry loop */
-retry:
+ retry:
     del = locate_preds(pq, k, preds, succs);
 
     /* return if key already exists, i.e., is present in a non-deleted
      * node */
     if (succs[0]->k == k && !is_marked_ref(preds[0]->next[0]) && preds[0]->next[0] == succs[0]) {
-	new->inserting = 0;
-	free_node(new);
-	goto out;
+        new->inserting = 0;
+        free_node(new);
+        goto out;
     }
     new->next[0] = succs[0];
 
     /* The node is logically inserted once it is present at the bottom
      * level. */
     if (!__sync_bool_compare_and_swap(&preds[0]->next[0], succs[0], new)) {
-	/* either succ has been deleted (modifying preds[0]),
-	 * or another insert has succeeded or preds[0] is head, 
-	 * and a restructure operation has updated it */
-	goto retry;
+        /* either succ has been deleted (modifying preds[0]),
+         * or another insert has succeeded or preds[0] is head,
+         * and a restructure operation has updated it */
+        goto retry;
     }
 
     /* Insert at each of the other levels in turn. */
     int i = 1;
     while ( i < new->level)
     {
-	/* If successor of new is deleted, we're done. (We're done if
-	 * only new is deleted as well, but this we can't tell) If a
-	 * candidate successor at any level is deleted, we consider
-	 * the operation completed. */
-	if (is_marked_ref(new->next[0]) ||
-	    is_marked_ref(succs[i]->next[0]) || 
-	    del == succs[i])
-	    goto success;
+        /* If successor of new is deleted, we're done. (We're done if
+         * only new is deleted as well, but this we can't tell) If a
+         * candidate successor at any level is deleted, we consider
+         * the operation completed. */
+        if (is_marked_ref(new->next[0]) ||
+            is_marked_ref(succs[i]->next[0]) ||
+            del == succs[i])
+            goto success;
 
-	/* prepare next pointer of new node */
-	new->next[i] = succs[i];
+        /* prepare next pointer of new node */
+        new->next[i] = succs[i];
         if (!__sync_bool_compare_and_swap(&preds[i]->next[i], succs[i], new))
         {
-	    /* failed due to competing insert or restruct */
+            /* failed due to competing insert or restructure */
             del = locate_preds(pq, k, preds, succs);
 
-	    /* if new has been deleted, we're done */
-	    if (succs[0] != new) goto success;
+            /* if new has been deleted, we're done */
+            if (succs[0] != new) goto success;
 	    
         } else {
-	    /* Succeeded at this level. */
-	    i++;
-	}
+            /* Succeeded at this level. */
+            i++;
+        }
     }
-success:
+ success:
     if (new) {
         /* this flag must be reset *after* all CAS have completed */
-	new->inserting = 0;
+        new->inserting = 0;
     }
     
-out:    
+ out:
     critical_exit();
 }
 
@@ -262,25 +262,25 @@ restructure(pq_t *pq)
     pred = pq->head;
     while (i > 0) {
         /* the order of these reads must be maintained */
-	h = pq->head->next[i]; /* record observed head */
-	CMB();
-	cur = pred->next[i]; /* take one step forward from pred */
-	if (!is_marked_ref(h->next[0])) {
-	    i--;
-	    continue;
-	}
-	/* traverse level until non-marked node is found 
-	 * pred will always have its delete flag set 
-	 */
-	while(is_marked_ref(cur->next[0])) {
-	    pred = cur;
-	    cur = pred->next[i];
-	}
-	assert(is_marked_ref(pred->next[0]));
+        h = pq->head->next[i]; /* record observed head */
+        CMB();
+        cur = pred->next[i]; /* take one step forward from pred */
+        if (!is_marked_ref(h->next[0])) {
+            i--;
+            continue;
+        }
+        /* traverse level until non-marked node is found
+         * pred will always have its delete flag set
+         */
+        while(is_marked_ref(cur->next[0])) {
+            pred = cur;
+            cur = pred->next[i];
+        }
+        assert(is_marked_ref(pred->next[0]));
 	
-	/* swing head pointer */
-	if (__sync_bool_compare_and_swap(&pq->head->next[i],h,cur))
-	    i--;
+        /* swing head pointer */
+        if (__sync_bool_compare_and_swap(&pq->head->next[i],h,cur))
+            i--;
     }
 }
 
@@ -309,27 +309,27 @@ deletemin(pq_t *pq)
     obs_head = x->next[0];
 
     do {
-	offset++;
+        offset++;
 
         /* expensive, high probability that this cache line has
-	 * been modified */
-	nxt = x->next[0];
+         * been modified */
+        nxt = x->next[0];
 
         // tail cannot be deleted
-	if (get_unmarked_ref(nxt) == pq->tail) {
-	    goto out;
-	}
+        if (get_unmarked_ref(nxt) == pq->tail) {
+            goto out;
+        }
 
-	/* Do not allow head to point past a node currently being
-	 * inserted. This makes the lock-freedom quite a theoretic
-	 * matter. */
-	if (newhead == NULL && x->inserting) newhead = x;
+        /* Do not allow head to point past a node currently being
+         * inserted. This makes the lock-freedom quite a theoretic
+         * matter. */
+        if (newhead == NULL && x->inserting) newhead = x;
 
-	/* optimization */
-	if (is_marked_ref(nxt)) continue;
-	/* the marker is on the preceding pointer */
+        /* optimization */
+        if (is_marked_ref(nxt)) continue;
+        /* the marker is on the preceding pointer */
         /* linearisation point deletemin */
-	nxt = __sync_fetch_and_or(&x->next[0], 1);
+        nxt = __sync_fetch_and_or(&x->next[0], 1);
     }
     while ( (x = get_unmarked_ref(nxt)) && is_marked_ref(nxt) );
 
@@ -354,23 +354,23 @@ deletemin(pq_t *pq)
      * which is deleted */
     if (__sync_bool_compare_and_swap(&pq->head->next[0], obs_head, get_marked_ref(newhead)))
     {
-	/* Update higher level pointers. */
-	restructure(pq);
+        /* Update higher level pointers. */
+        restructure(pq);
 
-	/* We successfully swung the upper head pointer. The nodes
-	 * between the observed head (obs_head) and the new bottom
-	 * level head pointed node (newhead) are guaranteed to be
-	 * non-live. Mark them for recycling. */
+        /* We successfully swung the upper head pointer. The nodes
+         * between the observed head (obs_head) and the new bottom
+         * level head pointed node (newhead) are guaranteed to be
+         * non-live. Mark them for recycling. */
 
-	cur = get_unmarked_ref(obs_head);
-	while (cur != get_unmarked_ref(newhead)) {
-	    nxt = get_unmarked_ref(cur->next[0]);
-	    assert(is_marked_ref(cur->next[0]));
-	    free_node(cur);
-	    cur = nxt;
-	}
+        cur = get_unmarked_ref(obs_head);
+        while (cur != get_unmarked_ref(newhead)) {
+            nxt = get_unmarked_ref(cur->next[0]);
+            assert(is_marked_ref(cur->next[0]));
+            free_node(cur);
+            cur = nxt;
+        }
     }
-out:
+ out:
     critical_exit();
     return v;
 }
@@ -418,9 +418,9 @@ pq_destroy(pq_t *pq)
     node_t *cur, *pred;
     cur = pq->head;
     while (cur != pq->tail) {
-	pred = cur;
-	cur = get_unmarked_ref(pred->next[0]);
-	free_node(pred);
+        pred = cur;
+        cur = get_unmarked_ref(pred->next[0]);
+        free_node(pred);
     }
     free(pq->tail);
     free(pq->head);

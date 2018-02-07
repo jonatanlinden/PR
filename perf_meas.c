@@ -113,15 +113,15 @@ main (int argc, char **argv)
     work		= work_uni;
     
     while ((opt = getopt(argc, argv, "t:n:o:s:hex")) >= 0) {
-	switch (opt) {
-	case 'n': nthreads	= atoi(optarg); break;
-	case 't': secs		= atoi(optarg); break;
-	case 'o': offset	= atoi(optarg); break;
-	case 's': init_size	= atoi(optarg); break;
+        switch (opt) {
+        case 'n': nthreads	= atoi(optarg); break;
+        case 't': secs		= atoi(optarg); break;
+        case 'o': offset	= atoi(optarg); break;
+        case 's': init_size	= atoi(optarg); break;
         case 'x': concise       = 1; break;
-	case 'e': exp		= 1; work = work_exp; break;
-	case 'h': usage(stdout, argv[0]); exit(EXIT_SUCCESS); break;
-	}
+        case 'e': exp		= 1; work = work_exp; break;
+        case 'h': usage(stdout, argv[0]); exit(EXIT_SUCCESS); break;
+        }
     }
 
 #ifndef PIN
@@ -151,17 +151,17 @@ main (int argc, char **argv)
     
     /* pre-fill priority queue with elements */
     for (int i = 0; i < init_size; i++) {
-	if (exp) {
-	    elem = exps[exps_pos++];
-	    insert(pq, elem, (void *)elem);
-	} else {
-	    elem = nrand48(rng);
-	    insert(pq, elem, (void *)elem);
-	}
+        if (exp) {
+            elem = exps[exps_pos++];
+            insert(pq, elem, (void *)elem);
+        } else {
+            elem = nrand48(rng);
+            insert(pq, elem, (void *)elem);
+        }
     }
 
 
-   /* initialize threads */
+    /* initialize threads */
     THREAD_ARGS_FOREACH(t) {
         t->id = i;
         rng_init(t->rng);
@@ -186,27 +186,27 @@ main (int argc, char **argv)
     /* END RUN BENCHMARK */
 
     THREAD_ARGS_FOREACH(t) {
-	pthread_join(t->thread, NULL);
+        pthread_join(t->thread, NULL);
     }
 
     /* PRINT PERF. MEASURES */
     int sum = 0, min = INT_MAX, max =0;
 
     THREAD_ARGS_FOREACH(t) {
-	sum += t->measure;
-	min = min(min, t->measure);
-	max = max(max, t->measure);
+        sum += t->measure;
+        min = min(min, t->measure);
+        max = max(max, t->measure);
     }
     struct timespec elapsed = timediff(start, end);
     double dt = elapsed.tv_sec + (double)elapsed.tv_nsec / 1000000000.0;
 
 
     if (!concise) {
-    printf("Total time:\t%1.8f s\n", dt);
-    printf("Ops:\t\t%d\n", sum);
-    printf("Ops/s:\t\t%.0f\n", (double) sum / dt);
-    printf("Min ops/t:\t%d\n", min);
-    printf("Max ops/t:\t%d\n", max);
+        printf("Total time:\t%1.8f s\n", dt);
+        printf("Ops:\t\t%d\n", sum);
+        printf("Ops/s:\t\t%.0f\n", (double) sum / dt);
+        printf("Min ops/t:\t%d\n", min);
+        printf("Max ops/t:\t%d\n", max);
     } else {
         printf("%li\n", lround((double) sum / dt));
         
