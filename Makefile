@@ -25,6 +25,7 @@ clean:
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+perf_meas: CFLAGS+=-DNDEBUG
 $(TARGETS): %: %.o ptst.o gc.o prioq.o common.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
