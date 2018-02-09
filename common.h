@@ -1,6 +1,6 @@
 #ifndef COMMON_H
 #define COMMON_H
-#define _GNU_SOURCE
+
 #include <inttypes.h>
 #include <unistd.h>
 #include <assert.h>
@@ -51,28 +51,34 @@ typedef struct thread_args_s
 } thread_args_t;
 
 
-#define E(c)					\
-    do {					\
-	int _c = (c);				\
-	if (_c < 0) {				\
-	    fprintf(stderr, "E: %s: %d: %s\n",	\
-		    __FILE__, __LINE__, #c);	\
-	}					\
+
+
+
+
+
+
+#define E(c)                                                                    \
+    do {                                                                        \
+        int _c = (c);                                                           \
+	if (_c < 0) {                                                               \
+	    fprintf(stderr, "E: %s: %d: %s\n",                                      \
+                __FILE__, __LINE__, #c);                                        \
+	}                                                                           \
     } while (0)
 
-#define E_en(c)					\
-    do {					\
-	int _c = (c);				\
-	if (_c != 0) {				\
-	    fprintf(stderr, strerror(_c));	\
-	}					\
+#define E_en(c)                                                                 \
+    do {                                                                        \
+        int _c = (c);                                                           \
+	if (_c != 0) {                                                              \
+	    fprintf(stderr, "%s", strerror(_c));                                    \
+	}                                                                           \
     } while (0)
 
-#define E_NULL(c)				\
-    do {					\
+#define E_NULL(c)               \
+    do {                        \
 	if ((c) == NULL) {			\
-	    perror("E_NULL");			\
-	}					\
+	    perror("E_NULL");       \
+	}                           \
     } while (0)
 
 
