@@ -61,7 +61,7 @@ static int gc_id[NUM_LEVELS];
 
 /* initialize new node */
 static node_t *
-alloc_node(pq_t *q)
+alloc_node()
 {
     node_t *n;
     /* crappy lcg rng */
@@ -115,7 +115,7 @@ free_node(node_t *n)
  */
 
 static node_t *
-locate_preds(pq_t *pq, pkey_t k, node_t **preds, node_t **succs)
+locate_preds(pq_t * restrict pq, pkey_t k, node_t ** restrict preds, node_t ** restrict succs)
 {
     node_t *x, *x_next, *del = NULL;
     int d = 0, i;
@@ -168,7 +168,7 @@ insert(pq_t *pq, pkey_t k, pval_t v)
     critical_enter();
     
     /* Initialise a new node for insertion. */
-    new    = alloc_node(pq);
+    new    = alloc_node();
     new->k = k;
     new->v = v;
 
