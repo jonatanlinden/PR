@@ -4,7 +4,8 @@
  * A fully recycling epoch-based garbage collector. Works by counting
  * threads in and out of critical regions, to work out when
  * garbage queues can be fully deleted.
- * 
+ *
+ * Copyright (c) 2018, Jonatan Lindén
  * Copyright (c) 2001-2003, K A Fraser
  * 
  * All rights reserved.
@@ -174,10 +175,10 @@ struct gc_st
 };
 
 
-#define MEM_FAIL(_s)                                                         \
-do {                                                                         \
-    fprintf(stderr, "OUT OF MEMORY: %d bytes at line %d\n", (_s), __LINE__); \
-    exit(1);                                                                 \
+#define MEM_FAIL(_s)                                                            \
+    do {                                                                        \
+    fprintf(stderr, "OUT OF MEMORY: %lu bytes at line %d\n", (_s), __LINE__);   \
+    exit(1);                                                                    \
 } while ( 0 )
 
 
@@ -245,7 +246,7 @@ static chunk_t *get_empty_chunks(int n)
 
 
 /* Get @n filled chunks, pointing at blocks of @sz bytes each. */
-static chunk_t *get_filled_chunks(int n, int sz)
+static chunk_t *get_filled_chunks(unsigned int n, unsigned int sz)
 {
     chunk_t *h, *p;
     char *node;
@@ -257,7 +258,7 @@ static chunk_t *get_filled_chunks(int n, int sz)
 #endif
 
     node = ALIGNED_ALLOC(n * BLKS_PER_CHUNK * sz);
-    if ( node == NULL ) MEM_FAIL(n * BLKS_PER_CHUNK * sz);
+    if ( node == NULL ) MEM_FAIL((unsigned long) n * BLKS_PER_CHUNK * sz);
 #ifdef WEAK_MEM_ORDER
     INITIALISE_NODES(node, n * BLKS_PER_CHUNK * sz);
 #endif
@@ -603,7 +604,7 @@ gc_t *gc_init(void)
 }
 
 
-int gc_add_allocator(int alloc_size)
+int gc_add_allocator(unsigned int alloc_size)
 {
     int ni, i = gc_global.nr_sizes;
     while ( (ni = CASIO(&gc_global.nr_sizes, i, i+1)) != i ) i = ni;
