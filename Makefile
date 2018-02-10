@@ -1,5 +1,5 @@
 CC	:= gcc
-CFLAGS	:= -O3 -DINTEL -Wall -std=c99
+CFLAGS	:= -DINTEL -Wall -std=c99
 LDFLAGS	:= -lpthread -lm
 
 OS	:= $(shell uname -s)
@@ -10,6 +10,13 @@ OS	:= $(shell uname -s)
     ifeq ($(OS),Darwin)
 	CFLAGS += -DCACHE_LINE_SIZE=`sysctl -n hw.cachelinesize`
     endif
+
+ifeq ($(DEBUG),true)
+	CFLAGS+=-DDEBUG -O0 -ggdb3 #-fno-omit-frame-pointer -fsanitize=address
+else
+	CFLAGS+=-O3
+endif
+
 
 VPATH	:= gc
 DEPS	+= Makefile $(wildcard *.h) $(wildcard gc/*.h)
