@@ -1,18 +1,40 @@
 /*****
- Time-stamp: <2013-11-26 12:05:52 jonatanlinden>
- * Verification of the linearizability of the priority queue algorithm
- * presented in the paper, and that the algorithm implements a priority
- * queue.
- * 
- * Some optimizations can be done, like reusing variables, replacing
- * the CAS macros, changing
- * some types from byte to bit (i.e. if limiting the number of levels
- * to two). We've omitted them here for the sake of clarity.
+ *
+ * Verification of the linearizability of the Linden-Jonsson priority
+ * queue at presented in the paper, and that the algorithm implements a
+ * priority queue.
  * 
  * Adapted from Martin Vechev et al., Experience with Model Checking
  * Linearizability, 2009.
  *
+ * Copyright (c) 2018, Jonatan Lindén
+ *
+ * All rights reserved.
  * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 
+ * * Redistributions of source code must retain the above copyright 
+ * notice, this list of conditions and the following disclaimer.
+ * 
+ * * Redistributions in binary form must reproduce the above copyright 
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution.
+ * 
+ * * The name of the author may not be used to endorse or promote products
+ * derived from this software without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR 
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+ * DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, 
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES 
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) 
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, 
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN 
+ * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+ * POSSIBILITY OF SUCH DAMAGE.
  */
 
 #define IF if ::
@@ -33,12 +55,14 @@
     assert(nodes[new].recycled == 0 || nodes[old].recycled);
 
 #define NLEVELS 3 /* 3 level skiplist */
-#define THREADS 3 /* 2 threads */
+#define THREADS 3 /* 3 threads */
 
-#define MAX_OPS 3 /* no. of random ops per thread */
+#define MAX_KEY 10
+
+#define MAX_OPS 2 /* no. of random ops per thread */
 #define BOUNDOFFSET 2 /* restructure offset */
 
-#define NODES 15  /* total memory */
+#define NODES 12  /* total memory */
 
 /* Operation types. */
 #define INS   0
@@ -68,10 +92,10 @@ node_t nodes[NODES];
 
 /**********  declaration of global variables *************/
 
-
 queue_t q; /* the priority queue */
 byte seqq[NODES]; /* the sequential spec. */
 idx_t glob_entry; /* pointer to free memory */
+
 
 /********* sequential specification **************/
 
@@ -106,7 +130,6 @@ inline get_entry(ptr)
     glob_entry++;
   }
 }
-
 
 /* return index pointing to a node being free to use */
 inline alloc_node(new, k)
@@ -167,9 +190,7 @@ inline Insert(key) {
 
 retry:
   LocatePreds(key)
-  /* bail out if key already exists */
-  IF (nodes[succs[0]].key == key && !nodes[preds[0]].d
-      && nodes[preds[0]].next[0] == succs[0]) -> goto end_insert FI;
+
   nodes[new].next[0] = succs[0];
   /* Lowest level */
   atomic { /* linearization point of non-failed insert */
@@ -276,13 +297,30 @@ end_remove:
  * END ALGORITHM
  *******************************************************************/
 
-/* random key generator.  */
-inline pick_key(var) { 
-  atomic {
-    select(var : 1..5);
-  }
-}
 
+
+
+
+/* Random key generator that generates unique keys
+ * 0 is taken by head sentinel node 
+ * MAX_KEY is taken by tail sentinel node, and should be > keys[*] */
+
+bit keys[MAX_KEY] = 1;
+
+inline pick_key(var) {
+    atomic {
+    if :: (keys[1] == 1) -> keys[1] = 0; var = 1
+       :: (keys[2] == 1) -> keys[2] = 0; var = 2
+       :: (keys[3] == 1) -> keys[3] = 0; var = 3
+       :: (keys[4] == 1) -> keys[4] = 0; var = 4
+       :: (keys[5] == 1) -> keys[5] = 0; var = 5
+       :: (keys[6] == 1) -> keys[6] = 0; var = 6
+       :: (keys[7] == 1) -> keys[7] = 0; var = 7
+       :: (keys[8] == 1) -> keys[8] = 0; var = 8
+       :: (keys[9] == 1) -> keys[9] = 0; var = 9
+    fi;
+    }
+}
 
 inline start_op() {
   init_locals();
@@ -303,9 +341,9 @@ inline exec_op(key) {
     :: op = INS;
        pick_key(key);
        Insert (key);
-    :: op = DEL; DeleteMin();
+    :: op = DEL;
+       DeleteMin();
   fi;
-
   end_op();
 }
 
@@ -313,7 +351,7 @@ inline exec_op(key) {
 inline execute()
 {
   byte _dummy1;
-  for (_dummy1 : 0..(MAX_OPS)) {
+  for (_dummy1 : 1..(MAX_OPS)) {
 	  exec_op(key);
   }
 }
@@ -326,8 +364,10 @@ inline init_locals()
     d = 0;
     preds[0] = 0;
     preds[1] = 0;
+    preds[2] = 0;
     succs[0] = 0;
     succs[1] = 0;
+    succs[2] = 0;
     op = 0;
     offset = 0;
     obshead = 0;
@@ -369,7 +409,7 @@ inline init_globals()
   atomic {
     glob_entry = 0;
     /* tail */
-    alloc_node(new, 7);
+    alloc_node(new, MAX_KEY);
     q.tail = new;
     nodes[q.tail].level = 1;
     nodes[q.tail].inserting = 0;
@@ -378,7 +418,7 @@ inline init_globals()
     q.head = new;
     nodes[q.head].level = 1;
     nodes[q.head].inserting = 0;
-    for (j : 0..1) { /* levels */
+    for (j : 0..2) { /* levels */
       nodes[q.head].next[j] = q.tail;
     };
   }
@@ -390,10 +430,12 @@ init {
     byte _dummy0;
     define_locals();
     init_globals();
+    /* run n - 1 threads as proctype */
 for ( _dummy0 : 1..(THREADS - 1)) {
       run client();
     }
   }
+  /* and run last thread here */
   execute();
 
   /* wait until the other process finishes. */

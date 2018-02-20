@@ -38,4 +38,10 @@ for more information about the available parameters.
 
 A SPIN model is included, with linearizability checks of the
 operations. The -O flag has to be used (if SPIN version >= 6), the
-model is using the old scope rules.
+model is using the old scope rules. To perform a bit state space analysis:
+
+    spin -O -a prioq_model.pml
+    gcc -O2 -DMEMLIM=2048 -DBITSTATE -o pan pan.c
+    ./pan -w33
+
+
